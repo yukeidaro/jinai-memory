@@ -8,6 +8,7 @@ import { createEmbedder } from "./embedder.js";
 import { createEventHub } from "./events.js";
 import { createMcpHandler } from "./mcp.js";
 import { createMemory } from "./memory.js";
+import { buildSnapshot } from "./snapshot.js";
 import { createFalkorDBStore } from "./store/falkordb-store.js";
 import { createMemoryStore } from "./store/memory-store.js";
 
@@ -131,7 +132,7 @@ async function mcpRequest(req, res, handle, ctx) {
   }
 }
 
-export function createServer({ memory, hub, token, user = "demo", publicDir = DEFAULT_PUBLIC }) {
+export function createServer({ memory, store, hub, token, user = "demo", publicDir = DEFAULT_PUBLIC }) {
   if (typeof token !== "string" || !token.trim()) throw new TypeError("A nonempty token is required");
   if (typeof user !== "string" || !user.trim()) throw new TypeError("A nonempty user is required");
   const handle = createMcpHandler({ memory });
@@ -186,6 +187,21 @@ export function createServer({ memory, hub, token, user = "demo", publicDir = DE
         hub.subscribe(res, { user });
         return;
       }
+      if (pathname === "/api/graph") {
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        const url = new URL(req.url, "http://localhost");
+        if (!sameToken(url.searchParams.get("token"), token)) {
+          json(res, 404, { error: "Not found" });
+          return;
+        }
+        if (req.method !== "GET") {
+          res.setHeader("Allow", "GET");
+          json(res, 405, { error: "Method not allowed" });
+          return;
+        }
+        json(res, 200, await buildSnapshot({ store, user }));
+        return;
+      }
       if (req.method !== "GET") {
         res.setHeader("Allow", "GET");
         json(res, 405, { error: "Method not allowed" });
@@ -231,7 +247,7 @@ async function start() {
     await store.ensureIndexes({ user, dim });
     const hub = createEventHub();
     const memory = createMemory({ store, embedder, onTouch: hub.publish });
-    const server = createServer({ memory, hub, token, user });
+    const server = createServer({ memory, store, hub, token, user });
     await new Promise((resolve, reject) => {
       server.once("error", reject);
       server.listen(port, resolve);
