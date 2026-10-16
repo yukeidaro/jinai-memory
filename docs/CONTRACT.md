@@ -18,6 +18,8 @@ vectorSearch({ user, embedding, k, labels? })     -> [{ node, score }] // score 
 close()                                           -> void
 ```
 
+Semantics: `neighbors` follows edges in **both directions** (each result's `edge` keeps its real `from`/`to`). `vectorSearch` only considers nodes that have an embedding. `props.createdAt` / `props.occurredAt` are ISO strings set by the caller. Label conventions used by the memory layer: `Memory` (a note; the only label with an embedding), `Topic`, `Source`; edge types `ABOUT` (Memory->Topic), `MENTIONED_BY` (Memory->Source), `SIMILAR` (Memory<->Memory, `props.w`), `RELATES_TO`, `NEXT_STEP`.
+
 `node` = `{ id, labels: string[], props: object }`. `edge` = `{ from, to, type, props }`. `embedding` is never returned inside `props`.
 
 Implementations: `src/store/falkordb-store.js` (the product; talks to FalkorDB through `src/falkordb-client.js`), `src/store/memory-store.js` (in-process, used only by unit tests and offline dev; same contract).
