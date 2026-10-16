@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: jinai-memory
+    runtime: docker
+    plan: free
+    # Choose the same or nearest region as FalkorDB Cloud before creating the service.
+    # Options: oregon, ohio, virginia, frankfurt, singapore. Region cannot change in place.
+    region: oregon
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: MEMORY_TOKEN
+        generateValue: true
+      - key: FALKORDB_URL
+        sync: false
+      - key: EMBEDDINGS_PROVIDER
+        value: fake
+      - key: MEMORY_USER
+        value: demo
+      - key: OPENAI_API_KEY
+        sync: false
