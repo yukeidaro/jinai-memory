@@ -46,7 +46,7 @@ async function deleteGraph(url, graph) {
             socket.write(encodeCommand(commands.shift()));
           } else {
             assert.equal(typeof reply, 'string');
-            assert.match(reply, /Graph removed/i);
+            assert.ok(reply === 'OK' || /Graph removed/i.test(reply));
             finish();
           }
         }

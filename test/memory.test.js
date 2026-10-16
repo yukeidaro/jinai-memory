@@ -94,6 +94,68 @@ test("orient is a rules-only map with relative dates and no more than 400 tokens
   assert.equal(embeds.length, calls);
 });
 
+test("orient merges three Topics sharing exactly two Memories into one row and touches every Topic", async (t) => {
+  const { memory, store, touches } = setup(t);
+  const { preference, event } = await mealMemories(memory);
+  const result = await memory.orient({ user: "alice" });
+  assert.deepEqual(result.split("\n"), [
+    "詳しくは open(title) で開く。",
+    "ハンバーグ・夕飯・食事 — 好み: ハンバーグが好き / 昨日: 夕飯にハンバーグを食べた",
+  ]);
+  const topics = await store.listNodes({ user: "alice", label: "Topic" });
+  assert.deepEqual(new Set(touches.at(-1).nodeIds), new Set([
+    ...topics.map((topic) => topic.id), preference.id, event.id,
+  ]));
+  assert.ok(estimateTokens(result) <= 400);
+});
+
+test("orient compares Memory sets independently of neighbor ordering", async (t) => {
+  const { memory, store } = setup(t);
+  const notes = [];
+  for (const kind of ["preference", "fact"]) {
+    notes.push(await memory.remember({
+      user: "alice", source: "claude", kind, title: kind, text: kind, tags: TAGS,
+    }));
+  }
+  const [first, second] = notes;
+  const [topic] = await store.findNodes({ user: "alice", label: "Topic", where: { name: "夕飯" } });
+  await store.addEdge({
+    user: "alice", from: second.id, to: topic.id, type: "ABOUT", props: { w: 2 },
+  });
+  await store.addEdge({
+    user: "alice", from: first.id, to: topic.id, type: "ABOUT", props: { w: 0.5 },
+  });
+  const neighbors = await store.neighbors({ user: "alice", id: topic.id, types: ["ABOUT"], limit: 10 });
+  assert.deepEqual(neighbors.map(({ node }) => node.id), [second.id, first.id]);
+  assert.equal((await memory.orient({ user: "alice" })).split("\n").length, 2);
+});
+
+test("orient keeps partially overlapping Memory sets separate even with identical displayed summaries", async (t) => {
+  const { memory } = setup(t);
+  const preference = {
+    user: "alice", source: "claude", kind: "preference", title: "shared title", text: "same summary",
+  };
+  await memory.remember({ ...preference, tags: ["first", "second"] });
+  await memory.remember({ ...preference, tags: ["first"] });
+  const lines = (await memory.orient({ user: "alice" })).split("\n").slice(1);
+  assert.deepEqual(lines, ["first — 好み: same summary", "second — 好み: same summary"]);
+});
+
+test("orient applies the five-row limit after merging duplicate Topics", async (t) => {
+  const { memory } = setup(t);
+  await mealMemories(memory);
+  for (const tag of ["work", "travel", "books", "music", "sports"]) {
+    await memory.remember({
+      user: "alice", source: "claude", kind: "fact", title: tag, text: "short", tags: [tag],
+    });
+  }
+  const result = await memory.orient({ user: "alice" });
+  assert.deepEqual(result.split("\n").slice(1).map((line) => line.split(" — ")[0]), [
+    "ハンバーグ・夕飯・食事", "work", "travel", "books", "music",
+  ]);
+  assert.ok(estimateTokens(result) <= 400);
+});
+
 test("open resolves Topic names and Memory ids or titles with the required shapes", async (t) => {
   const { memory, embeds } = setup(t);
   const { preference, event } = await mealMemories(memory);

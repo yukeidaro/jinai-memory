@@ -4,6 +4,7 @@ import { realpath, stat } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveRuntimeConfig } from "./config.js";
 import { createEmbedder } from "./embedder.js";
 import { createEventHub } from "./events.js";
 import { createMcpHandler } from "./mcp.js";
@@ -233,18 +234,17 @@ async function start() {
     return;
   }
   const user = process.env.MEMORY_USER ?? "demo";
-  const development = !process.env.FALKORDB_URL || !process.env.OPENAI_API_KEY;
-  const dim = development ? 128 : 1536;
-  const store = development
+  const config = resolveRuntimeConfig(process.env);
+  const store = config.store === "memory"
     ? createMemoryStore()
-    : createFalkorDBStore({ url: process.env.FALKORDB_URL });
+    : createFalkorDBStore({ url: config.falkordbUrl });
   try {
     const embedder = createEmbedder({
-      provider: development ? "fake" : "openai",
+      provider: config.embeddings,
       apiKey: process.env.OPENAI_API_KEY,
-      dim,
+      dim: config.dim,
     });
-    await store.ensureIndexes({ user, dim });
+    await store.ensureIndexes({ user, dim: config.dim });
     const hub = createEventHub();
     const memory = createMemory({ store, embedder, onTouch: hub.publish });
     const server = createServer({ memory, store, hub, token, user });
@@ -252,7 +252,8 @@ async function start() {
       server.once("error", reject);
       server.listen(port, resolve);
     });
-    if (development) console.log("開発モード: memory-store + fake embedder (not persisted).");
+    for (const note of config.notes) console.log(note);
+    if (config.store === "memory") console.log("開発モード: memory-store (not persisted).");
     console.log(`Listening on port ${server.address().port}; MCP: /mcp/***-<source>`);
     const shutdown = () => {
       server.close();

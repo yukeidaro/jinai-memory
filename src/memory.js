@@ -358,9 +358,16 @@ export function createMemory({ store, embedder, now = () => new Date(), onTouch 
       }
       ranked.sort((a, b) =>
         b.importance - a.importance || dateOf(b.entries[0]) - dateOf(a.entries[0]));
+      const groups = new Map();
+      for (const { topic, entries } of ranked) {
+        const key = JSON.stringify([...new Set(entries.map((node) => node.id))].sort());
+        const group = groups.get(key);
+        if (group) group.topics.push(topic);
+        else groups.set(key, { topics: [topic], entries });
+      }
       const lines = [GUIDE];
       const touched = [];
-      for (const { topic, entries } of ranked.slice(0, 5)) {
+      for (const { topics, entries } of [...groups.values()].slice(0, 5)) {
         const selected = ["preference", "event", "fact", "decision"]
           .map((kind) => entries.find((node) => node.props.kind === kind)).filter(Boolean).slice(0, 3);
         const fragments = selected.map((node) => {
@@ -371,10 +378,11 @@ export function createMemory({ store, embedder, now = () => new Date(), onTouch 
           }[node.props.kind];
           return `${label}: ${shortText(summaryOf(node), 45)}`;
         });
-        const line = `${shortText(oneLine(topic.props.name), 50)} — ${fragments.join(" / ")}`;
+        const names = topics.map((topic) => oneLine(topic.props.name)).join("・");
+        const line = `${shortText(names, 50)} — ${fragments.join(" / ")}`;
         if (tokens([...lines, line].join("\n")) > 400) break;
         lines.push(line);
-        touched.push(topic.id, ...selected.map((node) => node.id));
+        touched.push(...topics.map((topic) => topic.id), ...selected.map((node) => node.id));
       }
       if (!ranked.length) {
         lines.push("タグ付きの記憶はまだありません。");
