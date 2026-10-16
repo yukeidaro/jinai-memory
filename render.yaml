@@ -3,9 +3,9 @@ services:
     name: jinai-memory
     runtime: docker
     plan: free
-    # Choose the same or nearest region as FalkorDB Cloud before creating the service.
-    # Options: oregon, ohio, virginia, frankfurt, singapore. Region cannot change in place.
-    region: oregon
+    # FalkorDB Cloud is in GCP us-central1 (Iowa), so choose the nearest Render region: ohio.
+    # Region cannot change in place.
+    region: ohio
     healthCheckPath: /healthz
     autoDeploy: true
     envVars:

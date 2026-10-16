@@ -14,7 +14,7 @@
 
    Dashboard右上の **New → Blueprint** を選び、`yukeidaro/jinai-memory` の **Connect** を押します。Blueprint名を入力し、**Branch** に統合済みのブランチを選びます。**Blueprint Path** はルートの `render.yaml` のままにします。YAMLには `branch` を固定していないため、このサービスもBlueprintと同じブランチを使います。
 
-   作成前にFalkorDB Cloudのリージョンを確認してください。`render.yaml` は **Oregon (`oregon`)** が既定です。DBと同じ地域、無ければ近い地域を選ぶと通信遅延を抑えられます。変更する場合はClaude側で `region` を `oregon` / `ohio` / `virginia` / `frankfurt` / `singapore` のいずれかに直し、GitHubへ反映してからこの画面を開き直します。**作成後のリージョン変更にはサービスの作り直しが必要**です。
+   FalkorDB Cloudは **GCP `us-central1`（アイオワ）** にあるため、`render.yaml` は最も近いRenderの **Ohio (`ohio`)** を指定しています。DBとの通信遅延を抑えるため、作成画面でもOhioが選ばれていることを確認してください。**作成後のリージョン変更にはサービスの作り直しが必要**です。
 
 3. **秘密値の3項目を確認し、Deploy Blueprintを押す**
 
