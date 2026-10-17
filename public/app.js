@@ -12,6 +12,7 @@ const AUTHORS = {
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
 const mockMode = query.get("mock") === "1";
+const token = loadToken();
 const motionPreference = matchMedia("(prefers-reduced-motion: reduce)");
 const activeSources = new Set();
 const visuals = new Map();
@@ -30,6 +31,7 @@ let refreshTimer;
 let reconnectTimer;
 let refreshInProgress = false;
 let refreshAgain = false;
+let tokenRetryAt = 0;
 let stopped = false;
 let animation;
 let selectedId = null;
@@ -38,6 +40,35 @@ let previousFocus;
 let splitMode = false;
 let lastInteraction = -10000;
 let controlsActive = false;
+
+function readToken(search) {
+  const match = search.match(/(?:^\?|&)token(?:=([^&]*))?(?=&|$)/);
+  return match ? decodeURIComponent(match[1] || "") : null;
+}
+
+function loadToken() {
+  let value;
+  try {
+    value = readToken(location.search);
+  } catch (error) {
+    if (!(error instanceof URIError)) throw error;
+    value = "";
+    console.warn("Invalid token encoding. Open the page with ?token=... again.");
+  }
+  if (query.has("token")) {
+    value ??= "";
+    query.delete("token");
+    const search = query.toString();
+    history.replaceState(history.state, "", `${location.pathname}${search ? `?${search}` : ""}${location.hash}`);
+  }
+  try {
+    if (value !== null) sessionStorage.setItem("jinai-memory-token", value);
+    else value = sessionStorage.getItem("jinai-memory-token");
+  } catch {
+    console.warn("Session storage unavailable. The token will not persist across reloads.");
+  }
+  return value;
+}
 
 function sourceKey(node) {
   return String(node.type === "source" ? node.source || node.label : node.source || "").toLowerCase();
@@ -275,12 +306,12 @@ function syncGraph(snapshot) {
 
 function apiUrl(path) {
   const url = new URL(path, location.href);
-  if (query.has("token")) url.searchParams.set("token", query.get("token"));
+  if (token) url.search = `?token=${encodeURIComponent(token)}`;
   return url;
 }
 
 async function refreshGraph() {
-  if (stopped) return;
+  if (stopped || (!mockMode && (!token || Date.now() < tokenRetryAt))) return;
   if (refreshInProgress) {
     refreshAgain = true;
     return;
@@ -294,6 +325,14 @@ async function refreshGraph() {
       snapshot = await mock.readGraph();
     } else {
       const response = await fetch(apiUrl("/api/graph"), { cache: "no-store", signal: AbortSignal.timeout(10000) });
+      if (response.status === 404) {
+        tokenRetryAt = Date.now() + 30000;
+        events?.close();
+        events = null;
+        clearTimeout(reconnectTimer);
+        connection("Token not recognized", "error");
+        $("event-error").hidden = true;
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       snapshot = await response.json();
     }
@@ -301,16 +340,22 @@ async function refreshGraph() {
     syncGraph(snapshot);
     $("graph-error").hidden = true;
     success = true;
+    if (!mockMode && tokenRetryAt) {
+      tokenRetryAt = 0;
+      connectEvents();
+    }
   } catch (error) {
     if (stopped) return;
     const reason = /^HTTP \d{3}$/.test(error.message) ? ` (${error.message})` : "";
-    $("graph-error").textContent = `Graph unavailable${reason}. Retrying in 5s.`;
+    $("graph-error").textContent = tokenRetryAt
+      ? "Token not recognized. Open the page with ?token=... again. / トークンが一致しません。URL の ?token= を確認してください"
+      : `Graph unavailable${reason}. Retrying in 5s.`;
     $("graph-error").hidden = false;
     if (!data.nodes.length) showMessage("Waiting for memories", "The graph could not be loaded. Retrying automatically.");
     console.error("Graph refresh failed:", /^HTTP \d{3}$/.test(error.message) ? error.message : error.name);
   } finally {
     refreshInProgress = false;
-    const delay = refreshAgain ? 0 : success ? 30000 : 5000;
+    const delay = tokenRetryAt ? 30000 : refreshAgain ? 0 : success ? 30000 : 5000;
     refreshAgain = false;
     if (!stopped) refreshTimer = setTimeout(refreshGraph, delay);
   }
@@ -409,6 +454,10 @@ function connectEvents() {
   if (mockMode) {
     connection("Mock · simulated every 3s", "live");
     stopMock = mock.subscribe(receiveEvent);
+    return;
+  }
+  if (!token || tokenRetryAt) {
+    connection(token ? "Token not recognized" : "Token required", "error");
     return;
   }
   if (!("EventSource" in window)) {
@@ -642,6 +691,14 @@ function stop() {
 }
 
 async function start() {
+  if (!mockMode && !token) {
+    const message = "Add ?token=... to the URL, or use ?mock=1 / URL に ?token= を付けるか、?mock=1 で試せます";
+    $("graph-error").textContent = message;
+    $("graph-error").hidden = false;
+    showMessage("Token required", message);
+    connection("Token required", "error");
+    return;
+  }
   if (!webglAvailable()) {
     showMessage("WebGL が必要です", "WebGL is required. Enable hardware acceleration or use a WebGL-capable browser.");
     connection("WebGL unavailable", "error");
