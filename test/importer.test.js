@@ -84,34 +84,34 @@ test("importer discovers all four categories and excludes the MEMORY.md index", 
   assert.ok(entries.every((entry) => entry.status === "new"));
 });
 
-test("importer maps skill metadata, memory kinds, and only a short project tag", async () => {
+test("importer maps skill metadata and memory kinds without ineligible project tags", async () => {
   const entries = await plan();
   const named = (title) => entries.find((entry) => entry.memory.title === title).memory;
   assert.deepEqual(named("paper-folding"), {
     kind: "fact", title: "paper-folding",
     summary: "Make a checklist for folding imaginary paper shapes.",
     text: "## Steps\nUse a square sheet in the fictional workshop.\nCheck each fold before continuing.",
-    tags: ["skill", "paper-folding", "claude-code", "paper", "folding"],
+    tags: ["paper-folding"],
   });
-  assert.deepEqual(named("star-sorting").tags, ["skill", "star-sorting", "copilot", "star", "sorting"]);
+  assert.deepEqual(named("star-sorting").tags, ["star-sorting"]);
   assert.equal(named("Compact workshop answers").kind, "preference");
   assert.equal(named("Orbit palette decision").kind, "decision");
   for (const title of ["Workshop preference", "Imaginary shape glossary", "Untyped workshop note"]) {
     assert.equal(named(title).kind, "fact");
   }
-  const memories = entries.filter((entry) => entry.memory.tags[0] === "memory");
+  const memories = entries.filter((entry) => entry.from.includes("/projects/"));
   assert.equal(memories.length, 5);
   for (const entry of memories) {
-    assert.equal(entry.memory.tags[2], "orbit");
+    assert.deepEqual(entry.memory.tags, []);
     assert.ok(!JSON.stringify(entry.memory).includes("C--Workshop"));
   }
-  assert.equal(named("Untyped workshop note").tags[1], "unknown");
+  assert.ok(!named("Untyped workshop note").tags.includes("unknown"));
   const unfamiliar = planImport([{
     ...synthetic("---\nmetadata:\n  type: unusual\n---\nFictional note.", "memory"),
     project: "C:\\Workshop\\orbit",
   }], { home: HOME })[0];
   assert.equal(unfamiliar.memory.kind, "fact");
-  assert.deepEqual(unfamiliar.memory.tags, ["memory", "unusual", "orbit", "SKILL"]);
+  assert.deepEqual(unfamiliar.memory.tags, []);
 });
 
 test("importer supports category filters, repeated includes, and duplicate file avoidance", async () => {
@@ -132,49 +132,286 @@ test("importer supports category filters, repeated includes, and duplicate file 
   assert.deepEqual(options.only, ["skills", "copilot"]);
 });
 
-test("importer adds up to three distinct hyphenated name words longer than two characters", () => {
+test("importer extracts shared concrete name words longer than two characters and preserves skill names", () => {
+  const name = "Fabrikam-Pricing-AI-UX-a-Fabrikam-Billing-Extra";
   for (const type of ["skills", "copilot", "memory"]) {
-    const [entry] = makePlan(
-      "---\nname: linkedin-post-ai-ux-a-linkedin-memory-pricing-extra\nmetadata:\n  type: feedback\n---\nFictional body.",
-      type,
-    );
-    const base = type === "memory"
-      ? ["memory", "feedback", "unknown"]
-      : ["skill", "linkedin-post-ai-ux-a-linkedin-memory-pricing-extra", type === "copilot" ? "copilot" : "claude-code"];
-    assert.deepEqual(entry.memory.tags, [...base, "linkedin", "post", ...(type === "memory" ? ["pricing"] : ["memory"])]);
+    const [entry] = planImport(Array.from({ length: 8 }, (_, index) => synthetic(
+      `---\nname: ${index < 2 ? name : `other-${index}`}\nmetadata:\n  type: feedback\n---\nbody.`,
+      type, `note-${index}.md`,
+    )), { home: HOME });
+    assert.deepEqual(entry.memory.tags, [
+      "Fabrikam", "Pricing", "Billing", "Extra", ...(type === "memory" ? [] : [name]),
+    ]);
     assert.ok(entry.memory.tags.length <= 10);
     assert.equal(new Set(entry.memory.tags).size, entry.memory.tags.length);
-    assert.ok(["ai", "ux", "a", "extra"].every((tag) => !entry.memory.tags.includes(tag)));
+    assert.ok(["AI", "UX", "a"].every((tag) => !entry.memory.tags.includes(tag)));
   }
   const [duplicate] = makePlan("---\nname: skill-skill-post\n---\nBody.");
-  assert.deepEqual(duplicate.memory.tags, ["skill", "skill-skill-post", "claude-code", "post"]);
+  assert.deepEqual(duplicate.memory.tags, ["skill-skill-post"]);
   const [short] = makePlan("---\nname: ai-ux-a\n---\nBody.");
-  assert.deepEqual(short.memory.tags, ["skill", "ai-ux-a", "claude-code"]);
+  assert.deepEqual(short.memory.tags, ["ai-ux-a"]);
   const [fallback] = makePlan("Body.", "memory", "copilot-pricing.md");
-  assert.deepEqual(fallback.memory.tags, ["memory", "unknown", "copilot", "pricing"]);
+  assert.deepEqual(fallback.memory.tags, []);
 });
 
 test("importer derives instruction tags from heading words outside parentheses", () => {
-  const heading = "Copilot Pricing (private notes) Billing \uFF08internal only\uFF09 Copilot Limits Extra";
-  const [entry] = makePlan(
-    `## ${heading}\nFictional guidance.`,
-    "claude-md", "CLAUDE.md",
-  );
+  const heading = "Fabrikam Pricing (Private Notes) Billing \uFF08Internal Only\uFF09 Fabrikam Limits Extra";
+  const [entry] = planImport(Array.from({ length: 8 }, (_, index) => synthetic(
+    `## ${index < 2 ? heading : `other-${index}`}\nguidance.`,
+    "claude-md", `guide-${index}.md`,
+  )), { home: HOME });
   assert.deepEqual(entry.memory.tags, [
-    "instructions", heading, "Copilot", "Pricing", "Billing",
+    "Fabrikam", "Pricing", "Billing", "Limits", "Extra",
   ]);
   assert.ok(entry.memory.tags.length <= 10);
   assert.equal(new Set(entry.memory.tags).size, entry.memory.tags.length);
   const [short] = makePlan("## AI UX (private)\nFictional guidance.", "include", "extra.md");
-  assert.deepEqual(short.memory.tags, ["instructions", "AI UX (private)", "AI", "UX"]);
+  assert.deepEqual(short.memory.tags, []);
 });
 
-test("importer de-duplicates classification tags as well as concrete tags", () => {
+test("importer removes classification tags instead of merely de-duplicating them", () => {
   const [entry] = planImport([{
     ...synthetic("---\nname: memory-memory-feedback\nmetadata:\n  type: memory\n---\nBody.", "memory"),
     project: "memory",
   }], { home: HOME });
-  assert.deepEqual(entry.memory.tags, ["memory", "feedback"]);
+  assert.deepEqual(entry.memory.tags, []);
+});
+
+test("importer never tags classification names, metadata types, or hex IDs across input categories", () => {
+  const excluded = [
+    "memory", "feedback", "project", "user", "reference", "unknown",
+    "instructions", "skill", "claude-code", "copilot", "unusual",
+    "83fb83", "a96573", "A96573", "123456", "a96573abcdef",
+  ];
+  const inputs = excluded.flatMap((name, index) => [
+    synthetic(`---\nname: ${name}\n---\nbody.`, "skills", `skill-${index}.md`),
+    synthetic(`---\nname: ${name}\n---\nbody.`, "copilot", `copilot-${index}.md`),
+    {
+      ...synthetic(`---\nmetadata:\n  type: ${name}\n---\nbody.`, "memory", `note-${index}.md`),
+      project: `C--Workshop-${name}`,
+    },
+    synthetic(`## ${name}\nbody.`, "include", `guide-${index}.md`),
+  ]);
+  const entries = planImport(inputs, { home: HOME });
+  for (const { memory } of entries) {
+    assert.ok(memory.tags.every((tag) => !excluded.includes(tag)));
+    assert.ok(memory.tags.every((tag) => !/^(?=[a-f\d]*\d)[a-f\d]{6,}$/iu.test(tag)));
+  }
+  const [word] = planImport(Array.from({ length: 8 }, (_, index) => ({
+    ...synthetic(index < 2 ? "Decade" : "body.", "memory", `note-${index}.md`),
+    project: "C--Workshop-decade",
+  })), { home: HOME });
+  assert.deepEqual(word.memory.tags, ["Decade"]);
+});
+
+test("importer selects repeated concrete topics but not singleton, broad, generic, or lowercase-only words", () => {
+  const inputs = Array.from({ length: 8 }, (_, index) => synthetic([
+    index < 2 ? "Fabrikam Fabrikam 料金 ダッシュボード ordinary" : "",
+    index < 3 ? "Contoso" : "",
+    index === 0 ? "Singleton" : "",
+    index < 2 ? "The This When Use 確認 作業 必要 場合 ファイル フォルダ スキル ユーザー テスト タスク" : "",
+  ].join("\n"), "memory", `note-${index}.md`));
+  const entries = planImport(inputs, { home: HOME });
+  assert.deepEqual(entries[0].memory.tags, ["Fabrikam", "料金", "ダッシュボード"]);
+  assert.deepEqual(entries[1].memory.tags, entries[0].memory.tags);
+  assert.ok(entries.slice(2).every(({ memory }) => memory.tags.length === 0));
+  assert.deepEqual(inputs.map((file) => file.text), entries.map(({ memory }) => memory.text));
+});
+
+test("importer counts each memory once at the inclusive 25-percent boundary", () => {
+  const inputs = Array.from({ length: 8 }, (_, index) => synthetic(
+    index < 2 ? "Fabrikam ".repeat(10) : "body.", "memory", `note-${index}.md`,
+  ));
+  assert.deepEqual(planImport(inputs, { home: HOME })[0].memory.tags, ["Fabrikam"]);
+  assert.deepEqual(planImport(inputs.slice(0, 7), { home: HOME })[0].memory.tags, []);
+  inputs[1] = { ...inputs[1], text: "body." };
+  assert.deepEqual(planImport(inputs, { home: HOME })[0].memory.tags, []);
+});
+
+test("importer counts split instructions as memories and extracts topics from title, summary, and body", () => {
+  const sections = Array.from({ length: 8 }, (_, index) =>
+    `## ${index < 2 ? "Fabrikam" : `section-${index}`}\n${index < 2 ? "料金" : "body."}`);
+  const entries = makePlan(sections.join("\n"), "include", "guide.md");
+  assert.equal(entries.length, 8);
+  assert.deepEqual(entries[0].memory.tags, ["Fabrikam", "料金"]);
+  assert.deepEqual(entries[1].memory.tags, entries[0].memory.tags);
+  const summaries = planImport(Array.from({ length: 8 }, (_, index) => synthetic(
+    `---\ndescription: ${index < 2 ? "Fabrikam" : "brief"}\n---\nbody.`,
+    "memory", `note-${index}.md`,
+  )), { home: HOME });
+  assert.deepEqual(summaries[0].memory.tags, ["Fabrikam"]);
+});
+
+test("importer merges case variants using the most frequent permitted spelling", () => {
+  const inputs = Array.from({ length: 8 }, (_, index) => synthetic(
+    index === 0 ? "Copilot Copilot copilot Fabrikam Fabrikam FABRIKAM fabrikam fabrikam" :
+      index === 1 ? "Copilot copilot FABRIKAM fabrikam" : "body.",
+    "memory", `note-${index}.md`,
+  ));
+  const entries = planImport(inputs, { home: HOME });
+  assert.deepEqual(entries[0].memory.tags, ["fabrikam", "Copilot"]);
+  assert.deepEqual(entries[1].memory.tags, ["Copilot", "fabrikam"]);
+  inputs[0] = { ...inputs[0], text: "Copilot copilot copilot" };
+  inputs[1] = { ...inputs[1], text: "copilot" };
+  assert.deepEqual(planImport(inputs, { home: HOME })[0].memory.tags, []);
+});
+
+test("importer excludes sentence-case common English words whose lowercase occurrences dominate", () => {
+  const words = ["For", "One", "Design", "Writer", "Report", "Review", "Application", "Company"];
+  const entries = planImport(Array.from({ length: 8 }, (_, index) => synthetic(
+    index === 0 ? words.map((word) => `${word} ${word.toLowerCase()}`).join("\n") :
+      index === 1 ? words.join(" ").toLowerCase() : "body.",
+    "memory", `note-${index}.md`,
+  )), { home: HOME });
+  assert.ok(entries.every(({ memory }) => memory.tags.length === 0));
+});
+
+test("importer requires a strict uppercase-majority across occurrences, not memories", () => {
+  for (const [capitalized, lowercase, included] of [[1, 3, false], [2, 2, false], [3, 2, true]]) {
+    const entries = planImport(Array.from({ length: 8 }, (_, index) => synthetic(
+      index === 0 ? "Fabrikam ".repeat(capitalized) :
+        index === 1 ? "fabrikam ".repeat(lowercase) : "body.",
+      "memory", `note-${index}.md`,
+    )), { home: HOME });
+    assert.deepEqual(entries[0].memory.tags, included ? ["Fabrikam"] : [], `${capitalized}/${capitalized + lowercase}`);
+    assert.deepEqual(entries[1].memory.tags, entries[0].memory.tags);
+  }
+});
+
+test("importer removes path and URL chunks before extracting English and Japanese topics", () => {
+  const body = [
+    "C:\\Contoso\\Fabrikam-Drive\\note.md",
+    "C:\\カタログ\\架空料金\\note.md",
+    "https://Contoso.example/Fabrikam/Drive?category=架空料金#カタログ",
+    "HTTP://Contoso.example/Fabrikam/Drive",
+    "/Contoso/Fabrikam-Drive/note.md",
+    ".\\Contoso\\Fabrikam-Drive\\note.md",
+    "\\\\Contoso\\Fabrikam-Drive\\note.md",
+    "`assets/Fabrikam-Drive/note.md`",
+  ].join("\n");
+  const entries = planImport(Array.from({ length: 8 }, (_, index) => synthetic(
+    index < 2 ? body : "body.", "memory", `note-${index}.md`,
+  )), { home: HOME });
+  assert.ok(entries.every(({ memory }) => memory.tags.length === 0));
+  assert.equal(entries[0].memory.text, body);
+});
+
+test("importer removes path and URL noise from titles, summaries, and instruction headings", () => {
+  const noise = "C:\\Contoso\\Fabrikam-Drive\\note.md https://Contoso.example/Archive";
+  for (const field of ["name", "description", "heading"]) {
+    const entries = planImport(Array.from({ length: 8 }, (_, index) => synthetic(
+      field === "heading" ? `## ${index < 2 ? noise : `section-${index}`}\nbody.` :
+        `---\n${field}: ${index < 2 ? noise : `note-${index}`}\n---\nbody.`,
+      field === "heading" ? "include" : "memory", `note-${index}.md`,
+    )), { home: HOME });
+    assert.ok(entries.every(({ memory }) => memory.tags.length === 0), field);
+  }
+});
+
+test("importer excludes common Japanese action words while preserving concrete topics", () => {
+  const entries = planImport(Array.from({ length: 8 }, (_, index) => synthetic(index < 2 ? [
+    "作成 生成 報告 開発 更新 取得 出力 入力 表示 管理 対応 判断 指示 セッション",
+    "Fabrikam 料金 Copilot",
+  ].join("\n") : "body.", "memory", `note-${index}.md`)), { home: HOME });
+  assert.deepEqual(entries[0].memory.tags, ["Fabrikam", "料金", "Copilot"]);
+  assert.deepEqual(entries[1].memory.tags, entries[0].memory.tags);
+});
+
+test("importer excludes formatting headings while keeping concrete topics", () => {
+  const entries = planImport(Array.from({ length: 8 }, (_, index) => ({
+    ...synthetic(index < 2 ? [
+      "**Why:** Fabrikam 料金 Copilot",
+      "**How to apply:**",
+      "**Apply:** **Step:** **Steps:** **Audit:** **URL:** **Note:**",
+    ].join("\n") : "body.", "memory", `note-${index}.md`),
+    project: "C--Users-Contoso-workshop-Why",
+  })), { home: HOME });
+  assert.deepEqual(entries[0].memory.tags, ["Fabrikam", "料金", "Copilot"]);
+  assert.deepEqual(entries[1].memory.tags, entries[0].memory.tags);
+  assert.ok(entries.slice(2).every(({ memory }) => memory.tags.length === 0));
+});
+
+test("importer gates project suffixes by the same corpus conditions as content topics", () => {
+  for (const [project, bodies, expected] of [
+    ["verify", ["body.", "body."], []],
+    ["verify", ["Verify", "body."], []],
+    ["Verify", ["verify", "verify"], []],
+    ["Verify", ["Verify verify", "verify"], []],
+    ["Verify", ["Verify", "Verify", "Verify"], []],
+    ["Why", ["Why", "Why"], []],
+    ["fabrikam", ["Fabrikam", "Fabrikam"], ["Fabrikam"]],
+  ]) {
+    const entries = planImport(Array.from({ length: 8 }, (_, index) => ({
+      ...synthetic(bodies[index] ?? "body.", "memory", `note-${index}.md`),
+      project: `C--Users-Contoso-workshop-${project}`,
+    })), { home: HOME });
+    for (const { memory } of entries) assert.deepEqual(memory.tags, expected, `${project}: ${bodies}`);
+  }
+});
+
+test("importer keeps only the five most frequent topics per memory and de-duplicates base tags", () => {
+  const names = ["Fabrikam", "Contoso", "料金", "機密", "承認", "ダッシュボード", "ワークショップ"];
+  const inputs = Array.from({ length: 8 }, (_, index) => ({
+    ...synthetic(index < 2 ? names.map((name, rank) => `${name} `.repeat(rank + 1)).join("\n") : "body.",
+      "memory", `note-${index}.md`),
+    project: "C--Workshop-fabrikam",
+  }));
+  const entries = planImport(inputs, { home: HOME });
+  assert.deepEqual(entries[0].memory.tags, [...names.slice(2).reverse(), "Fabrikam"]);
+  assert.ok(entries.every(({ memory }) => memory.tags.length <= 10 &&
+    new Set(memory.tags.map((tag) => tag.toLowerCase())).size === memory.tags.length));
+  inputs[0] = { ...inputs[0], project: "C--Workshop-ワークショップ" };
+  const [duplicate] = planImport(inputs, { home: HOME });
+  assert.equal(duplicate.memory.tags.length, 5);
+  assert.equal(duplicate.memory.tags.filter((tag) => tag === "ワークショップ").length, 1);
+});
+
+test("importer still checks secrets in project tags removed by topic eligibility", () => {
+  const fake = `ghp_${"fictional".repeat(4)}`;
+  const [entry] = planImport([{
+    ...synthetic("safe body.", "memory", "safe.md"), project: fake,
+  }], { home: HOME });
+  assert.equal(entry.secret, "github_token");
+  assert.equal(entry.status, "secret-skip");
+  assert.deepEqual(entry.memory.tags, []);
+  assert.ok(!formatImportList([entry]).includes(fake));
+});
+
+test("importer hashes corpus-driven tag changes even when source text is unchanged", () => {
+  const inputs = Array.from({ length: 8 }, (_, index) => synthetic(
+    index < 2 ? "Fabrikam" : "body.", "memory", `note-${index}.md`,
+  ));
+  const before = planImport(inputs, { home: HOME });
+  const state = Object.fromEntries(before.map(({ key, hash }) => [key, hash]));
+  const after = planImport(inputs.map((file, index) =>
+    index === 2 ? { ...file, text: "Fabrikam" } : file), { home: HOME, state });
+  assert.deepEqual(after.slice(0, 3).map(({ change }) => change), ["changed", "changed", "changed"]);
+  assert.ok(after.slice(3).every(({ change }) => change === "unchanged"));
+  assert.deepEqual(after[0].memory.tags, []);
+});
+
+test("imported concrete topics produce an orient map without classification or project IDs", async (t) => {
+  const store = createMemoryStore();
+  t.after(() => store.close());
+  const memory = createMemory({ store, embedder: createEmbedder({ provider: "fake", dim: 16 }) });
+  const entries = planImport(Array.from({ length: 8 }, (_, index) => ({
+    ...synthetic(index < 2 ? [
+      "---", "description: useful detail.", "---",
+      "Fabrikam 料金 Copilot",
+      "For for for Design design design",
+      "作成 生成 報告 開発 更新 取得 出力 入力 表示 管理 対応 判断 指示 セッション",
+      "C:\\Contoso\\Archive-Drive\\note.md https://Contoso.example/Archive",
+    ].join("\n") : "body.", "memory", `note-${index}.md`),
+    project: "C--Workshop-83fb83",
+  })), { home: HOME });
+  for (const entry of entries) {
+    await memory.remember({ user: "fictional", source: "claude-code", ...entry.memory });
+  }
+  const result = await memory.orient({ user: "fictional" });
+  assert.match(result, /Fabrikam・料金・Copilot —/u);
+  assert.doesNotMatch(result, /skill|memory|feedback|instructions|claude-code|copilot|83fb83/u);
+  assert.equal(result.split("\n").length, 2);
+  assert.equal((await store.listNodes({ user: "fictional", label: "Memory" })).length, 8);
 });
 
 test("importer displays home paths with tilde and outside paths as slash-normalized absolute paths", () => {
@@ -228,7 +465,7 @@ test("importer splits instructions by H2 while preserving preambles and fenced h
   ].join("\n"), "include", "extra.md");
   assert.deepEqual(entries.map((entry) => entry.memory.title), ["extra.md", "extra.md / Style", "extra.md / Review"]);
   assert.ok(entries.every((entry) => entry.memory.kind === "preference"));
-  assert.deepEqual(entries[1].memory.tags, ["instructions", "Style"]);
+  assert.deepEqual(entries[1].memory.tags, []);
   assert.match(entries[1].memory.text, /## Not a heading/u);
   assert.match(entries[1].memory.text, /### Details/u);
   assert.equal(makePlan("Whole file.", "claude-md", "CLAUDE.md")[0].memory.text, "Whole file.");
@@ -254,6 +491,8 @@ test("importer checks secrets in untruncated text, frontmatter, metadata, and ea
   const inputs = [
     fake,
     `${"a".repeat(20_100)}\n${fake}`,
+    `C:\\Contoso\\${fake}\\note.md`,
+    `https://example.test/${fake}`,
     `---\nname: ${fake}\n---\nSafe body.`,
     `---\ndescription: ${fake}\n---\nSafe body.`,
     `---\nunrelated: ${fake}\n---\nSafe body.`,

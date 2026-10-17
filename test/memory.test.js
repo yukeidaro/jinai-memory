@@ -158,7 +158,7 @@ test("orient applies the five-row limit after merging duplicate Topics", async (
 
 test("orient excludes shared classification Topics from a 100-memory map", async (t) => {
   const { memory, store, touches, embeds } = setup(t);
-  const specific = ["copilot", "pricing", "hamburger"];
+  const specific = ["Copilot", "pricing", "hamburger"];
   for (let index = 0; index < 100; index += 1) {
     await memory.remember({
       user: "alice", source: "claude", kind: "fact",
@@ -203,12 +203,64 @@ test("orient restores broad Topics only when no specific candidates remain", asy
   for (let index = 0; index < 8; index += 1) {
     await memory.remember({
       user: "alice", source: "claude", kind: "fact",
-      title: `note ${index}`, text: "useful detail", tags: ["skill", "memory"],
+      title: `note ${index}`, text: "useful detail", tags: ["workshop", "planning"],
     });
   }
   assert.deepEqual((await memory.orient({ user: "alice" })).split("\n"), [
-    "詳しくは open(title) で開く。", "skill・memory — 事実: useful detail",
+    "詳しくは open(title) で開く。", "workshop・planning — 事実: useful detail",
   ]);
+});
+
+test("orient excludes legacy classifications and IDs even from a small mixed map without changing open or recall", async (t) => {
+  const { memory, store, touches, embeds } = setup(t);
+  const excluded = [
+    "skill", "memory", "feedback", "instructions", "claude-code", "copilot",
+    "project", "user", "reference", "unknown", "83fb83", "a96573", "A96573", "123456",
+  ];
+  await memory.remember({
+    user: "alice", source: "claude", kind: "fact", title: "fictional workshop",
+    text: "useful detail", tags: [...excluded, "Fabrikam", "料金", "Copilot"],
+  });
+  const topics = await store.listNodes({ user: "alice", label: "Topic" });
+  const calls = embeds.length;
+  const result = await memory.orient({ user: "alice" });
+  assert.deepEqual(result.split("\n"), [
+    "詳しくは open(title) で開く。", "Fabrikam・料金・Copilot — 事実: useful detail",
+  ]);
+  for (const name of excluded) assert.ok(!result.includes(name));
+  assert.equal(embeds.length, calls);
+  assert.ok(estimateTokens(result) <= 400);
+  for (const topic of topics.filter((topic) => excluded.includes(topic.props.name))) {
+    assert.ok(!touches.at(-1).nodeIds.includes(topic.id));
+  }
+  assert.deepEqual(await store.listNodes({ user: "alice", label: "Topic" }), topics);
+  const opened = await memory.open({ user: "alice", title: "skill" });
+  assert.equal(opened.note.title, "skill");
+  assert.equal(opened.neighbors[0].title, "fictional workshop");
+  store.vectorSearch = async () => [];
+  const recalled = await memory.recall({ user: "alice", query: "skill" });
+  assert.equal(recalled.others[0].title, "fictional workshop");
+});
+
+test("orient does not restore classification-only Topics through the broad-topic fallback", async (t) => {
+  const { memory } = setup(t);
+  for (let index = 0; index < 8; index += 1) {
+    await memory.remember({
+      user: "alice", source: "claude", kind: "fact",
+      title: `note ${index}`, text: "useful detail", tags: ["skill", "memory", "83fb83"],
+    });
+  }
+  const result = await memory.orient({ user: "alice" });
+  assert.doesNotMatch(result, /skill|memory|83fb83| — /u);
+});
+
+test("orient keeps hexadecimal-looking words that have no digits", async (t) => {
+  const { memory } = setup(t);
+  await memory.remember({
+    user: "alice", source: "claude", kind: "fact",
+    title: "fictional architecture", text: "useful detail", tags: ["decade", "FACADE"],
+  });
+  assert.match(await memory.orient({ user: "alice" }), /decade・FACADE —/u);
 });
 
 test("orient uses one-line titles for empty summaries without changing stored notes or open", async (t) => {

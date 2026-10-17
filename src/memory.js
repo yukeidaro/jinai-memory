@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isExcludedImportTopic } from "./importer.js";
 
 const DAY = 86_400_000;
 const ALL = Number.MAX_SAFE_INTEGER;
@@ -351,6 +352,7 @@ export function createMemory({ store, embedder, now = () => new Date(), onTouch 
       const memoryCount = (await store.listNodes({ user, label: "Memory", limit: ALL })).length;
       const ranked = [];
       for (const topic of await store.listNodes({ user, label: "Topic" })) {
+        if (isExcludedImportTopic(topic.props.name)) continue;
         const entries = (await store.neighbors({
           user, id: topic.id, types: ["ABOUT"], limit: ALL,
         })).filter(({ node }) => node.labels.includes("Memory"))

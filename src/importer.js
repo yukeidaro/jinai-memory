@@ -5,8 +5,31 @@ import { findSecret } from "./secret-guard.js";
 export const IMPORT_TYPES = ["skills", "memory", "claude-md", "copilot"];
 const TEXT_LIMIT = 20_000;
 const TRUNCATED = "\n\n(truncated)";
+const CLASSIFICATION_TOPICS = new Set([
+  "memory", "feedback", "project", "user", "reference", "unknown",
+  "instructions", "skill", "claude-code", "copilot",
+]);
+const TOPIC_STOP_WORDS = new Set([
+  "the", "this", "that", "these", "those", "when", "where", "what", "which",
+  "with", "without", "from", "into", "and", "are", "not", "you", "your",
+  "use", "using", "used", "keep", "check", "should", "must", "can", "will",
+  "have", "has", "any", "all", "more", "only", "before", "after", "example",
+  "file", "files", "folder", "folders", "skills", "claude", "markdown",
+  "text", "title", "summary", "note", "notes", "steps", "test", "tests", "task",
+  "for", "one", "design", "writer", "report", "review", "application", "company",
+  "why", "how", "apply", "step", "audit", "url",
+  "確認", "作業", "必要", "場合", "方法", "手順", "内容", "設定", "使用", "利用",
+  "実行", "変更", "追加", "保存", "参照", "記憶", "情報", "説明", "対象", "以下",
+  "作成", "生成", "報告", "開発", "更新", "取得", "出力", "入力", "表示", "管理",
+  "対応", "判断", "指示", "セッション",
+  "ファイル", "フォルダ", "スキル", "ユーザー", "テスト", "タスク",
+]);
 
 export class ImportError extends Error {}
+
+export function isExcludedImportTopic(name) {
+  return CLASSIFICATION_TOPICS.has(name) || /^(?=[a-f\d]*\d)[a-f\d]{6,}$/iu.test(name);
+}
 
 function resolvePath(value) {
   return path.resolve(value.replace(/[\\/]/gu, path.sep));
@@ -20,14 +43,53 @@ function firstLine(value) {
   return Array.from(value.trim().split(/[\r\n]/u, 1)[0]).slice(0, 160).join("");
 }
 
-function nameWords(name) {
-  return name.split("-").map((word) => word.trim()).filter((word) => Array.from(word).length > 2);
+function importTags(base, topics, types) {
+  const tags = new Map();
+  for (const tag of [...topics, ...base]) {
+    const key = tag.toLowerCase();
+    if (tag && !tags.has(key) && !isExcludedImportTopic(tag) && !types.has(key)) {
+      tags.set(key, tag);
+    }
+  }
+  return [...tags.values()].slice(0, 10);
 }
 
-function importTags(base, words) {
-  const tags = [...new Set(base)];
-  const specific = [...new Set(words)].filter((word) => !tags.includes(word)).slice(0, 3);
-  return [...tags, ...specific].slice(0, 10);
+function importTopics(notes, types) {
+  const topics = new Map();
+  const counts = notes.map((note) => {
+    const counts = new Map();
+    const title = note.title.replace(/\([^)]*\)|\uFF08[^\uFF09]*\uFF09/gu, " ");
+    const text = [title, note.summary, note.text].join("\n")
+      .replace(/https?:\/\/\S+/giu, " ")
+      .replace(/\S+/gu, (chunk) => /[\\/]/u.test(chunk) ? " " : chunk);
+    for (const [word] of text.matchAll(/\b[A-Za-z]{3,}\b|[\p{Script=Katakana}ー]{3,}|\p{Script=Han}+/gu)) {
+      const key = word.toLowerCase();
+      if (TOPIC_STOP_WORDS.has(key) || types.has(key) ||
+          key !== "copilot" && isExcludedImportTopic(key) ||
+          /^\p{Script=Han}+$/u.test(word) && (Array.from(word).length < 2 || Array.from(word).length > 4)) continue;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+      if (!topics.has(key)) topics.set(key, { memories: 0, forms: new Map(), capitalized: 0, occurrences: 0 });
+      const topic = topics.get(key);
+      topic.forms.set(word, (topic.forms.get(word) ?? 0) + 1);
+      topic.occurrences += 1;
+      if (/[A-Z]/u.test(word)) topic.capitalized += 1;
+    }
+    for (const key of counts.keys()) topics.get(key).memories += 1;
+    return counts;
+  });
+  for (const [key, topic] of topics) {
+    const [form] = [...topic.forms].filter(([word]) => !isExcludedImportTopic(word))
+      .sort((a, b) => b[1] - a[1]);
+    const concrete = !/^[a-z]+$/u.test(key) || topic.capitalized > topic.occurrences / 2;
+    if (!concrete || topic.memories < 2 || topic.memories > notes.length * 0.25 || !form) {
+      topics.delete(key);
+    } else topic.name = form[0];
+  }
+  return {
+    names: new Map([...topics].map(([key, { name }]) => [key, name])),
+    tags: counts.map((count) => [...count].filter(([key]) => topics.has(key))
+      .sort((a, b) => b[1] - a[1]).slice(0, 5).map(([key]) => topics.get(key).name)),
+  };
 }
 
 function scalar(value) {
@@ -194,7 +256,8 @@ export async function discoverFiles({ home, include = [], only = IMPORT_TYPES, i
 
 export function planImport(files, { home, state = {} }) {
   const root = resolvePath(home);
-  return files.flatMap((file) => {
+  const types = new Set();
+  const notes = files.flatMap((file) => {
     const { attributes, body, header } = parseFrontmatter(file.text);
     const filename = resolvePath(file.filename);
     const relative = path.relative(root, filename).replaceAll("\\", "/");
@@ -202,51 +265,60 @@ export function planImport(files, { home, state = {} }) {
     const basename = path.basename(file.filename.replace(/[\\/]/gu, path.sep));
     const name = textAttribute(attributes, "name", basename.replace(/\.md$/iu, ""));
     const description = textAttribute(attributes, "description", "");
-    let notes;
+    let memories;
     if (file.type === "skills" || file.type === "copilot") {
-      notes = [{
+      memories = [{
         heading: "", raw: file.text, kind: "fact", title: name,
         summary: firstLine(description), text: body,
-        tags: importTags(["skill", name, file.type === "copilot" ? "copilot" : "claude-code"], nameWords(name)),
+        tags: [name],
       }];
     } else if (file.type === "memory") {
       const type = textAttribute(attributes.metadata ?? {}, "type", "unknown");
+      types.add(type.toLowerCase());
       const project = file.project?.split(/[\\/-]+/u).filter(Boolean).at(-1) ?? "unknown";
-      notes = [{
+      memories = [{
         heading: "", raw: file.text,
         kind: type === "feedback" ? "preference" : type === "project" ? "decision" : "fact",
         title: name, summary: firstLine(description), text: body,
-        tags: importTags(["memory", type, project], nameWords(name)),
+        tags: [project],
       }];
     } else {
-      notes = splitInstructions(body).map(({ heading, text }) => ({
+      memories = splitInstructions(body).map(({ heading, text }) => ({
         heading, raw: `${header}\n${heading}\n${text}`, kind: "preference",
         title: heading ? `${basename} / ${heading}` : basename,
         summary: "", text,
-        tags: importTags(["instructions", heading || basename],
-          heading.replace(/\([^)]*\)|\uFF08[^\uFF09]*\uFF09/gu, " ").match(/[\p{L}\p{N}]+/gu) ?? []),
+        tags: [],
       }));
     }
     const occurrences = new Map();
-    return notes.map(({ heading, raw, ...note }) => {
+    return memories.map(({ heading, raw, ...note }) => {
       const occurrence = occurrences.get(heading) ?? 0;
       occurrences.set(heading, occurrence + 1);
       const key = JSON.stringify([relative, heading, occurrence]);
-      const hash = digest(JSON.stringify({ raw, note }));
-      const secret = findSecret([raw, note.title, note.summary, ...note.tags].join("\n"));
-      const characters = Array.from(note.text);
-      const truncated = characters.length > TEXT_LIMIT;
-      const text = truncated
-        ? characters.slice(0, TEXT_LIMIT - TRUNCATED.length).join("") + TRUNCATED
-        : note.text;
-      const change = state[key] === hash ? "unchanged" : Object.hasOwn(state, key) ? "changed" : "new";
       return {
-        key, hash, secret: secret?.kind, truncated, change,
-        status: secret ? "secret-skip" : change === "unchanged" ? change : truncated ? "truncated" : change,
-        from: outside ? filename.replaceAll("\\", "/") : `~/${relative}`, chars: Array.from(text).length,
-        memory: { ...note, text },
+        key, raw, note, projectTags: file.type === "memory",
+        from: outside ? filename.replaceAll("\\", "/") : `~/${relative}`,
       };
     });
+  });
+  const { names, tags } = importTopics(notes.map(({ note }) => note), types);
+  return notes.map(({ key, raw, from, projectTags, note: original }, index) => {
+    const base = original.tags.filter((tag) => !projectTags || names.has(tag.toLowerCase()))
+      .map((tag) => names.get(tag.toLowerCase()) ?? tag);
+    const note = { ...original, tags: importTags(base, tags[index], types) };
+    const hash = digest(JSON.stringify({ raw, note }));
+    const secret = findSecret([raw, note.title, note.summary, ...original.tags, ...note.tags].join("\n"));
+    const characters = Array.from(note.text);
+    const truncated = characters.length > TEXT_LIMIT;
+    const text = truncated
+      ? characters.slice(0, TEXT_LIMIT - TRUNCATED.length).join("") + TRUNCATED
+      : note.text;
+    const change = state[key] === hash ? "unchanged" : Object.hasOwn(state, key) ? "changed" : "new";
+    return {
+      key, hash, secret: secret?.kind, truncated, change,
+      status: secret ? "secret-skip" : change === "unchanged" ? change : truncated ? "truncated" : change,
+      from, chars: Array.from(text).length, memory: { ...note, text },
+    };
   });
 }
 
