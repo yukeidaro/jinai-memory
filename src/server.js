@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
@@ -29,10 +29,10 @@ const MIME = {
 };
 
 function sameToken(actual, expected) {
-  if (typeof actual !== "string") return false;
-  const a = Buffer.from(actual);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
+  // Fixed-size digests also compare missing and different-length tokens.
+  const a = createHash("sha256").update(typeof actual === "string" ? actual : "").digest();
+  const b = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(a, b);
 }
 
 function json(res, status, body) {
@@ -133,9 +133,30 @@ async function mcpRequest(req, res, handle, ctx) {
   }
 }
 
-export function createServer({ memory, store, hub, token, user = "demo", publicDir = DEFAULT_PUBLIC }) {
-  if (typeof token !== "string" || !token.trim()) throw new TypeError("A nonempty token is required");
-  if (typeof user !== "string" || !user.trim()) throw new TypeError("A nonempty user is required");
+export function createServer({ memory, store, hub, users, token, user = "demo", publicDir = DEFAULT_PUBLIC }) {
+  const entries = users === undefined ? [{ user, token }] : users;
+  if (!Array.isArray(entries) || !entries.length) throw new TypeError("A nonempty users array is required");
+  const tokens = new Set();
+  const accounts = entries.map((entry) => {
+    if (typeof entry?.token !== "string" || !entry.token.trim()) {
+      throw new TypeError("A nonempty token is required for each user");
+    }
+    if (typeof entry.user !== "string" || !entry.user.trim()) {
+      throw new TypeError("A nonempty user is required");
+    }
+    if (tokens.has(entry.token)) throw new TypeError("User tokens must be unique");
+    tokens.add(entry.token);
+    return { user: entry.user, token: entry.token };
+  });
+  function authenticate(tokenFor) {
+    let matched;
+    for (const account of accounts) {
+      const matches = sameToken(tokenFor(account.token), account.token);
+      // Prefer the longest token when tokens contain source-like suffixes.
+      if (matches && (!matched || account.token.length > matched.token.length)) matched = account;
+    }
+    return matched;
+  }
   const handle = createMcpHandler({ memory });
   const root = path.resolve(publicDir);
   return createHttpServer(async (req, res) => {
@@ -149,12 +170,10 @@ export function createServer({ memory, store, hub, token, user = "demo", publicD
         return;
       }
       if (pathname.startsWith("/mcp/")) {
-        const prefix = `/mcp/${token}-`;
-        const source = pathname.slice(prefix.length);
-        if (
-          !sameToken(pathname.slice(5, 5 + token.length), token) ||
-          !pathname.startsWith(prefix) || !/^[a-z0-9-]{1,20}$/u.test(source)
-        ) {
+        const account = authenticate((expected) =>
+          /^-[a-z0-9-]{1,20}$/u.test(pathname.slice(5 + expected.length))
+            ? pathname.slice(5, 5 + expected.length) : undefined);
+        if (!account) {
           json(res, 404, { error: "Not found" });
           return;
         }
@@ -163,7 +182,8 @@ export function createServer({ memory, store, hub, token, user = "demo", publicD
           json(res, 405, { error: "Method not allowed" });
           return;
         }
-        await mcpRequest(req, res, handle, { user, source });
+        const source = pathname.slice(6 + account.token.length);
+        await mcpRequest(req, res, handle, { user: account.user, source });
         return;
       }
       // Check before URL normalization, on both Windows and POSIX separators.
@@ -176,7 +196,8 @@ export function createServer({ memory, store, hub, token, user = "demo", publicD
       }
       if (pathname === "/events") {
         const url = new URL(req.url, "http://localhost");
-        if (!sameToken(url.searchParams.get("token"), token)) {
+        const account = authenticate(() => url.searchParams.get("token"));
+        if (!account) {
           json(res, 404, { error: "Not found" });
           return;
         }
@@ -185,13 +206,14 @@ export function createServer({ memory, store, hub, token, user = "demo", publicD
           json(res, 405, { error: "Method not allowed" });
           return;
         }
-        hub.subscribe(res, { user });
+        hub.subscribe(res, { user: account.user });
         return;
       }
       if (pathname === "/api/graph") {
         res.setHeader("Access-Control-Allow-Origin", "*");
         const url = new URL(req.url, "http://localhost");
-        if (!sameToken(url.searchParams.get("token"), token)) {
+        const account = authenticate(() => url.searchParams.get("token"));
+        if (!account) {
           json(res, 404, { error: "Not found" });
           return;
         }
@@ -200,7 +222,7 @@ export function createServer({ memory, store, hub, token, user = "demo", publicD
           json(res, 405, { error: "Method not allowed" });
           return;
         }
-        json(res, 200, await buildSnapshot({ store, user }));
+        json(res, 200, await buildSnapshot({ store, user: account.user }));
         return;
       }
       if (req.method !== "GET") {
@@ -221,9 +243,16 @@ export function createServer({ memory, store, hub, token, user = "demo", publicD
 }
 
 async function start() {
-  const token = process.env.MEMORY_TOKEN;
-  if (!token?.trim()) {
-    console.error("MEMORY_TOKEN is required. Set $env:MEMORY_TOKEN='<your-random-token>' and run node src/server.js.");
+  let config;
+  try {
+    config = resolveRuntimeConfig(process.env);
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
+    return;
+  }
+  if (config.users.some(({ token }) => typeof token !== "string" || !token.trim())) {
+    console.error("MEMORY_TOKEN is required. Set $env:MEMORY_TOKEN='<your-random-token>' or configure MEMORY_USERS and run node src/server.js.");
     process.exitCode = 1;
     return;
   }
@@ -233,8 +262,6 @@ async function start() {
     process.exitCode = 1;
     return;
   }
-  const user = process.env.MEMORY_USER ?? "demo";
-  const config = resolveRuntimeConfig(process.env);
   const store = config.store === "memory"
     ? createMemoryStore()
     : createFalkorDBStore({ url: config.falkordbUrl });
@@ -244,15 +271,16 @@ async function start() {
       apiKey: process.env.OPENAI_API_KEY,
       dim: config.dim,
     });
-    await store.ensureIndexes({ user, dim: config.dim });
+    for (const { user } of config.users) await store.ensureIndexes({ user, dim: config.dim });
     const hub = createEventHub();
     const memory = createMemory({ store, embedder, onTouch: hub.publish });
-    const server = createServer({ memory, store, hub, token, user });
+    const server = createServer({ memory, store, hub, users: config.users });
     await new Promise((resolve, reject) => {
       server.once("error", reject);
       server.listen(port, resolve);
     });
     for (const note of config.notes) console.log(note);
+    console.log(`users: ${config.users.map(({ user }) => user).join(", ")}`);
     if (config.store === "memory") console.log("開発モード: memory-store (not persisted).");
     console.log(`Listening on port ${server.address().port}; MCP: /mcp/***-<source>`);
     const shutdown = () => {

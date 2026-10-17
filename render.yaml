@@ -11,6 +11,9 @@ services:
     envVars:
       - key: MEMORY_TOKEN
         generateValue: true
+      # When set, MEMORY_USERS takes precedence over MEMORY_TOKEN and MEMORY_USER.
+      - key: MEMORY_USERS
+        sync: false
       - key: FALKORDB_URL
         sync: false
       - key: EMBEDDINGS_PROVIDER

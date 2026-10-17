@@ -22,13 +22,13 @@ async function setup(t, options = {}) {
   const store = createMemoryStore();
   const hub = createEventHub();
   const touches = [];
-  const token = randomUUID();
+  const token = options.token ?? options.users?.[0]?.token ?? randomUUID();
   const memory = createMemory({
     store, embedder: createEmbedder({ provider: "fake", dim: 128 }),
     now: () => new Date("2026-10-16T12:00:00.000Z"),
     onTouch(event) { touches.push(event); hub.publish(event); },
   });
-  const server = createServer({ memory, hub, token, user: "alice", ...options });
+  const server = createServer({ memory, store, hub, token, user: "alice", ...options });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   t.after(async () => {
@@ -37,17 +37,20 @@ async function setup(t, options = {}) {
     await store.close();
   });
   const base = `http://127.0.0.1:${server.address().port}`;
-  const url = (source = "claude") => `${base}/mcp/${token}-${source}`;
-  const post = (body, source = "claude", headers = { "Content-Type": "application/json" }) =>
-    fetch(url(source), { method: "POST", headers, body: JSON.stringify(body) });
-  const request = async (method, params, source = "claude") => {
-    const response = await post({ jsonrpc: "2.0", id: 1, method, params }, source);
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get("content-type"), "application/json");
-    return response.json();
+  const client = (credential = token) => {
+    const url = (source = "claude") => `${base}/mcp/${encodeURIComponent(credential)}-${source}`;
+    const post = (body, source = "claude", headers = { "Content-Type": "application/json" }) =>
+      fetch(url(source), { method: "POST", headers, body: JSON.stringify(body) });
+    const request = async (method, params, source = "claude") => {
+      const response = await post({ jsonrpc: "2.0", id: 1, method, params }, source);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("content-type"), "application/json");
+      return response.json();
+    };
+    const call = (name, args, source) => request("tools/call", { name, arguments: args }, source);
+    return { url, post, request, call };
   };
-  const call = (name, args, source) => request("tools/call", { name, arguments: args }, source);
-  return { store, memory, server, hub, touches, token, base, url, post, request, call };
+  return { store, memory, server, hub, touches, token, base, client, ...client() };
 }
 
 function value(reply) {
@@ -315,16 +318,183 @@ test("HTTP starts when publicDir is absent and never starts without a token", as
 });
 
 test("CLI refuses to start without MEMORY_TOKEN and explains how to configure it", () => {
-  const env = { ...process.env };
-  for (const key of ["MEMORY_TOKEN", "FALKORDB_URL", "OPENAI_API_KEY"]) delete env[key];
   const child = spawnSync(process.execPath, [path.resolve("src", "server.js")], {
-    env, encoding: "utf8", timeout: 5_000,
+    env: { SystemRoot: process.env.SystemRoot }, encoding: "utf8", timeout: 5_000,
   });
   assert.equal(child.error, undefined);
   assert.equal(child.status, 1);
   assert.equal(child.stdout, "");
   assert.match(child.stderr, /MEMORY_TOKEN is required/u);
   assert.match(child.stderr, /\$env:MEMORY_TOKEN=/u);
+});
+
+test("two tokens isolate remember, recall, open, maps, and graph snapshots", async (t) => {
+  const users = [{ user: "demo", token: randomUUID() }, { user: "yu", token: randomUUID() }];
+  const { base, client } = await setup(t, { users, token: "ignored-legacy-token", user: "ignored" });
+  const demo = client(users[0].token);
+  const yu = client(users[1].token);
+  const graph = async (token) => {
+    const response = await fetch(`${base}/api/graph?token=${encodeURIComponent(token)}`);
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const demoNote = { ...NOTE, title: "Demo dinner", text: "Demo only", summary: "Demo only" };
+  const yuNote = { ...NOTE, title: "Yu dinner", text: "Yu only", summary: "Yu only" };
+  const savedDemo = value(await demo.call("remember", demoNote));
+  assert.deepEqual(value(await yu.call("recall", { query: NOTE.title })).preferences, []);
+  assert.deepEqual((await graph(users[1].token)).nodes, []);
+  const savedYu = value(await yu.call("remember", yuNote, "chatgpt"));
+  for (const [account, own, other, ownNote, otherNote] of [
+    [users[0], savedDemo, savedYu, demoNote, yuNote],
+    [users[1], savedYu, savedDemo, yuNote, demoNote],
+  ]) {
+    const connection = client(account.token);
+    const recalled = value(await connection.call("recall", { query: NOTE.title }));
+    assert.deepEqual(recalled.preferences.map(({ id }) => id), [own.id]);
+    assert.equal(value(await connection.call("open", { id: own.id })).note.title, ownNote.title);
+    assert.equal((await connection.call("open", { id: other.id })).result.isError, true);
+    assert.equal((await connection.call("open", { title: otherNote.title })).result.isError, true);
+    for (const reply of [
+      await connection.request("tools/list"),
+      await connection.call("orient", {}),
+    ]) {
+      assert.equal(JSON.stringify(reply).includes(otherNote.summary), false);
+    }
+    const snapshot = await graph(account.token);
+    assert.equal(snapshot.user, account.user);
+    assert.deepEqual(snapshot.nodes.filter(({ type }) => type === "memory").map(({ id }) => id), [own.id]);
+    assert.equal(snapshot.nodes.some(({ id }) => id === other.id), false);
+    assert.equal(JSON.stringify(snapshot).includes(otherNote.summary), false);
+  }
+});
+
+test("HTTP SSE never sends the other token's remember or recall notifications", { timeout: 5_000 }, async (t) => {
+  const users = [{ user: "demo", token: randomUUID() }, { user: "yu", token: randomUUID() }];
+  const { base, client } = await setup(t, { users });
+  const readers = [];
+  for (const { token } of users) {
+    const controller = new AbortController();
+    t.after(() => controller.abort());
+    const response = await fetch(`${base}/events?token=${encodeURIComponent(token)}`, { signal: controller.signal });
+    assert.equal(response.status, 200);
+    const reader = response.body.getReader();
+    assert.match(new TextDecoder().decode((await reader.read()).value), /: connected\n\n/u);
+    readers.push(reader);
+  }
+  const yu = value(await client(users[1].token).call("remember", NOTE));
+  value(await client(users[1].token).call("recall", { query: NOTE.title }));
+  const demo = value(await client(users[0].token).call("remember", NOTE));
+  const events = await Promise.all(readers.map(async (reader) => {
+    let text = "";
+    const decoder = new TextDecoder();
+    while (!text.endsWith("\n\n")) {
+      const chunk = await reader.read();
+      assert.equal(chunk.done, false);
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    return text.trim().split("\n\n").map((frame) => JSON.parse(frame.slice("data: ".length)));
+  }));
+  for (const [index, saved] of [demo, yu].entries()) {
+    assert.ok(events[index].length > 0);
+    assert.ok(events[index].every((event) => event.user === users[index].user));
+    assert.ok(events[index].some((event) => event.op === "remember" && event.nodeIds.includes(saved.id)));
+  }
+  await Promise.all(readers.map((reader) => reader.cancel()));
+});
+
+test("multi-user MCP, graph, and SSE hide missing, invalid, and ignored legacy tokens with 404", async (t) => {
+  const users = [{ user: "demo", token: randomUUID() }, { user: "yu", token: randomUUID() }];
+  const legacy = randomUUID();
+  const { base } = await setup(t, { users, token: legacy });
+  for (const token of ["", "x", randomUUID(), legacy, users[0].token + "x", users[1].token.slice(1), "あ".repeat(36)]) {
+    for (const route of [
+      `/mcp/${encodeURIComponent(token)}-claude`,
+      `/api/graph?token=${encodeURIComponent(token)}`,
+      `/events?token=${encodeURIComponent(token)}`,
+    ]) {
+      const response = await fetch(base + route);
+      assert.equal(response.status, 404);
+      assert.deepEqual(await response.json(), { error: "Not found" });
+    }
+  }
+  for (const route of ["/api/graph", "/events"]) {
+    const response = await fetch(base + route);
+    assert.equal(response.status, 404);
+    await response.text();
+  }
+});
+
+test("encoded tokens containing Base64 and percent characters work for MCP, graph, and SSE", async (t) => {
+  const users = [
+    { user: "demo", token: "demo+/-=%2F".repeat(3) },
+    { user: "yu", token: "yu+/-=%2F".repeat(4) },
+  ];
+  const { base, client } = await setup(t, { users });
+  for (const { user, token } of users) {
+    const saved = value(await client(token).call("remember", NOTE, "custom-agent"));
+    const snapshot = await (await fetch(`${base}/api/graph?token=${encodeURIComponent(token)}`)).json();
+    assert.equal(snapshot.user, user);
+    assert.deepEqual(snapshot.nodes.filter(({ type }) => type === "memory").map(({ id }) => id), [saved.id]);
+    const controller = new AbortController();
+    t.after(() => controller.abort());
+    const response = await fetch(`${base}/events?token=${encodeURIComponent(token)}`, { signal: controller.signal });
+    assert.equal(response.status, 200);
+    await response.body.cancel();
+  }
+});
+
+test("MCP selects the longest matching token independently of users ordering", async (t) => {
+  const token = "shared-prefix-aaaaaaaaaaaaaaaaaaaaaaaa";
+  const short = { user: "demo", token };
+  const long = { user: "yu", token: `${token}-custom` };
+  for (const users of [[short, long], [long, short]]) {
+    const { client, store } = await setup(t, { users });
+    const saved = value(await client(long.token).call("remember", NOTE, "agent"));
+    assert.equal((await store.getNode({ user: "yu", id: saved.id })).props.source, "agent");
+    assert.equal(await store.getNode({ user: "demo", id: saved.id }), null);
+    value(await client(short.token).call("remember", NOTE, "claude"));
+    assert.equal((await store.listNodes({ user: "demo", label: "Memory" })).length, 1);
+  }
+});
+
+test("legacy short token and custom user namespace still support MCP and graph", async (t) => {
+  const { base, token, call } = await setup(t, { token: "legacy-token", user: "legacy:user" });
+  const saved = value(await call("remember", NOTE));
+  const response = await fetch(`${base}/api/graph?token=${encodeURIComponent(token)}`);
+  assert.equal(response.status, 200);
+  const snapshot = await response.json();
+  assert.equal(snapshot.user, "legacy:user");
+  assert.deepEqual(snapshot.nodes.filter(({ type }) => type === "memory").map(({ id }) => id), [saved.id]);
+});
+
+test("createServer rejects empty user lists, invalid entries, and duplicate tokens", async (t) => {
+  const { memory, store, hub } = await setup(t);
+  for (const users of [
+    [], null, {}, [null], [{ user: "demo", token: "" }], [{ user: "", token: randomUUID() }],
+    [{ user: "demo", token: "same-token" }, { user: "yu", token: "same-token" }],
+  ]) {
+    assert.throws(() => createServer({ memory, store, hub, users, token: randomUUID() }), TypeError);
+  }
+});
+
+test("CLI rejects invalid MEMORY_USERS explicitly without printing supplied tokens", () => {
+  const token = randomUUID();
+  for (const MEMORY_USERS of [
+    `{"demo":"${token}"`,
+    JSON.stringify({ "bad/name": token }),
+    JSON.stringify({ demo: token, yu: token }),
+    JSON.stringify({ demo: token.slice(0, 23) }),
+  ]) {
+    const child = spawnSync(process.execPath, [path.resolve("src", "server.js")], {
+      env: { SystemRoot: process.env.SystemRoot, MEMORY_USERS }, encoding: "utf8", timeout: 5_000,
+    });
+    assert.equal(child.error, undefined);
+    assert.equal(child.status, 1);
+    assert.equal(child.stdout, "");
+    assert.match(child.stderr, /MEMORY_USERS/u);
+    assert.equal(child.stderr.includes(token), false);
+    assert.equal(child.stderr.includes(token.slice(0, 23)), false);
+  }
 });
 
 test("HTTP rejects a directory symlink that escapes publicDir", async (t) => {

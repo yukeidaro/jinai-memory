@@ -98,3 +98,109 @@ test("notes never include the configured URL, API key, or token", () => {
     }
   }
 });
+
+test("MEMORY_TOKEN retains the default user and legacy token and namespace formats", () => {
+  assert.deepEqual(resolveRuntimeConfig({ MEMORY_TOKEN: "legacy-token" }).users, [
+    { user: "demo", token: "legacy-token" },
+  ]);
+  assert.deepEqual(resolveRuntimeConfig({
+    MEMORY_TOKEN: "legacy-token", MEMORY_USER: "legacy:user",
+  }).users, [{ user: "legacy:user", token: "legacy-token" }]);
+});
+
+test("MEMORY_USERS resolves multiple users and takes precedence over legacy settings", () => {
+  const demo = randomUUID();
+  const yu = randomUUID();
+  const config = resolveRuntimeConfig({
+    MEMORY_USERS: JSON.stringify({ demo, yu }), MEMORY_TOKEN: "", MEMORY_USER: "ignored",
+  });
+  assert.deepEqual(config.users, [{ user: "demo", token: demo }, { user: "yu", token: yu }]);
+  assert.ok(config.notes.some((note) => /MEMORY_USERS takes precedence over MEMORY_TOKEN/u.test(note)));
+});
+
+test("MEMORY_USERS rejects invalid JSON and anything other than a nonempty object without echoing input", () => {
+  const token = randomUUID();
+  for (const MEMORY_USERS of ["", " ", `{"demo":"${token}"`, "null", "[]", '["token"]', "{}", "42", '"text"']) {
+    assert.throws(() => resolveRuntimeConfig({ MEMORY_USERS, MEMORY_TOKEN: randomUUID() }), (error) => {
+      assert.ok(error instanceof TypeError);
+      assert.match(error.message, /MEMORY_USERS/u);
+      assert.equal(error.message.includes(token), false);
+      return true;
+    });
+  }
+});
+
+test("MEMORY_USERS validates user names at the 1 and 40 character boundaries", () => {
+  for (const user of ["a", "A_0-z", "a".repeat(40), "__proto__"]) {
+    const token = randomUUID();
+    assert.deepEqual(resolveRuntimeConfig({
+      MEMORY_USERS: JSON.stringify({ [user]: token }),
+    }).users, [{ user, token }]);
+  }
+  for (const user of ["", "a".repeat(41), "has space", "user:name", "user/name", "user.name", "user\nname", "ユーザー"]) {
+    const token = randomUUID();
+    assert.throws(() => resolveRuntimeConfig({
+      MEMORY_USERS: JSON.stringify({ [user]: token }),
+    }), (error) => {
+      assert.match(error.message, /MEMORY_USERS user names/u);
+      assert.equal(error.message.includes(token), false);
+      return true;
+    });
+  }
+});
+
+test("MEMORY_USERS requires nonblank string tokens of at least 24 characters", () => {
+  for (const token of ["", "a".repeat(23), " ".repeat(24), null, 123, {}, []]) {
+    assert.throws(() => resolveRuntimeConfig({
+      MEMORY_USERS: JSON.stringify({ demo: token }),
+    }), /MEMORY_USERS tokens must be nonblank strings of at least 24/u);
+  }
+  const token = "a".repeat(24);
+  assert.deepEqual(resolveRuntimeConfig({
+    MEMORY_USERS: JSON.stringify({ demo: token }),
+  }).users, [{ user: "demo", token }]);
+});
+
+test("MEMORY_USERS rejects duplicate tokens without disclosing them", () => {
+  const token = randomUUID();
+  assert.throws(() => resolveRuntimeConfig({
+    MEMORY_USERS: JSON.stringify({ demo: token, yu: token }),
+  }), (error) => {
+    assert.match(error.message, /MEMORY_USERS tokens must be unique/u);
+    assert.equal(error.message.includes(token), false);
+    return true;
+  });
+});
+
+test("URL-unsafe tokens warn without preventing startup or disclosing any token", () => {
+  const safe = `${randomUUID()}._~`;
+  for (const suffix of ["+", "/", "=", "%", " ", "?", "#", "あ"]) {
+    const unsafe = randomUUID() + suffix;
+    for (const env of [
+      { MEMORY_TOKEN: unsafe },
+      { MEMORY_USERS: JSON.stringify({ demo: safe, yu: unsafe }), MEMORY_TOKEN: randomUUID() },
+    ]) {
+      const config = resolveRuntimeConfig(env);
+      assert.ok(config.users.some(({ token }) => token === unsafe));
+      assert.ok(config.notes.some((note) => /require URL encoding/u.test(note)));
+      for (const token of [safe, unsafe, env.MEMORY_TOKEN].filter(Boolean)) {
+        assert.equal(config.notes.some((note) => note.includes(token)), false);
+      }
+    }
+  }
+  for (const env of [
+    { MEMORY_TOKEN: safe },
+    { MEMORY_USERS: JSON.stringify({ demo: safe }) },
+  ]) {
+    assert.equal(resolveRuntimeConfig(env).notes.some((note) => /URL encoding/u.test(note)), false);
+  }
+});
+
+test("multi-user notes never contain legacy or active tokens, backend URLs, or API keys", () => {
+  const secrets = [randomUUID(), randomUUID() + "+/=", randomUUID(), randomUUID(), randomUUID()];
+  const { notes } = resolveRuntimeConfig({
+    MEMORY_USERS: JSON.stringify({ demo: secrets[0], yu: secrets[1] }),
+    MEMORY_TOKEN: secrets[2], FALKORDB_URL: secrets[3], OPENAI_API_KEY: secrets[4],
+  });
+  for (const secret of secrets) assert.equal(notes.some((note) => note.includes(secret)), false);
+});
