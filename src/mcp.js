@@ -1,8 +1,14 @@
+import { findSecret } from "./secret-guard.js";
+
 const VERSIONS = new Set(["2025-06-18", "2025-03-26", "2024-11-05"]);
 const KINDS = ["preference", "event", "fact", "decision"];
-const DEFAULT_INSTRUCTIONS =
-  "When the user's preferences or past events may matter, first look at the Memory map. " +
-  "If needed, call open once. Save new preferences, decisions, and events with remember.";
+const DEFAULT_INSTRUCTIONS = [
+  "Before answering about the user's preferences, past events, plans, or people, inspect the Memory map; open the closest relevant entry once, or skip open if none.",
+  "Proactively remember preferences, decisions, events (with an ISO date/time in occurredAt), and facts about the user or their world, even without a request. One fact per call.",
+  "Use 3-5 synonymous tags, including Japanese and English for Japanese conversations; use Markdown text and a one-line summary.",
+  "Never store passwords, API keys, tokens, card or identity numbers, anything the user says not to remember, small talk, or fleeting details.",
+  "After saving, briefly acknowledge it in your reply. Use recall only as a fallback and orient to refresh the map.",
+].join("\n");
 const nonempty = { type: "string", minLength: 1 };
 const datePattern =
   "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d" +
@@ -20,10 +26,18 @@ function tools(map) {
   return [
     {
       name: "remember",
+      title: "Save a memory",
       description:
-        "Save a memory. Store preferences as preference and things that happened as event " +
-        "with an ISO date and time in occurredAt. Include 3-5 synonymous or related tags " +
-        "(for example, dinner, supper, evening meal). Write text in Markdown and summary on one line.",
+        "Proactively call when conversation reveals a preference, decision, event " +
+        "(set occurredAt to its ISO date/time), or fact about the user or their world, " +
+        "even without a request. One fact per call. Use 3-5 synonymous tags; include " +
+        "Japanese and English for Japanese conversations. Use Markdown text and a one-line summary. " +
+        "Never store passwords, API keys, tokens, card or identity numbers, anything the user " +
+        "says not to remember, small talk, or fleeting details. After saving, briefly " +
+        "acknowledge it in your reply (e.g. 'I'll remember that.').",
+      annotations: {
+        readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false,
+      },
       inputSchema: {
         ...schema({
           kind: { type: "string", enum: KINDS },
@@ -42,9 +56,13 @@ function tools(map) {
     },
     {
       name: "open",
+      title: "Open a memory",
       description:
-        "Open a memory or topic found in the entry map, by title or id. " +
+        "Before answering about the user's preferences, past events, plans, or people, " +
+        "inspect the Memory map below. If an entry is relevant, open the closest one once " +
+        "by title or id. Do not call if the map has no relevant entries. " +
         "Up to 5 nearby memories are included.\n\nMemory map:\n" + map,
+      annotations: { readOnlyHint: true, openWorldHint: false },
       inputSchema: {
         ...schema({ title: nonempty, id: nonempty }),
         anyOf: [{ required: ["title"] }, { required: ["id"] }],
@@ -52,13 +70,17 @@ function tools(map) {
     },
     {
       name: "recall",
+      title: "Search memories",
       description:
         "Search as a fallback when the map and open are not enough. Do not call this every time.",
+      annotations: { readOnlyHint: true, openWorldHint: false },
       inputSchema: schema({ query: nonempty }, ["query"]),
     },
     {
       name: "orient",
-      description: "Return the current memory map. No arguments are needed.",
+      title: "Refresh the Memory map",
+      description: "Refresh the Memory map when you need an up-to-date map. No arguments are needed.",
+      annotations: { readOnlyHint: true, openWorldHint: false },
       inputSchema: schema({}),
     },
   ];
@@ -182,6 +204,18 @@ export function createMcpHandler({
       const args = params.arguments === undefined ? {} : params.arguments;
       const problem = invalidArguments(tool.name, args, tool.inputSchema);
       if (problem) return { jsonrpc: "2.0", id, result: toolResult(problem, true) };
+      if (tool.name === "remember") {
+        const secret = findSecret([args.title, args.text, args.summary, ...args.tags].join("\n"));
+        if (secret) {
+          return {
+            jsonrpc: "2.0", id,
+            result: toolResult(
+              `This looks like a secret (${secret.kind}). Jin AI Memory does not store secrets.`,
+              true,
+            ),
+          };
+        }
+      }
       try {
         const result = await memory[tool.name]({ ...args, user, source: ctx.source });
         return { jsonrpc: "2.0", id, result: toolResult(result) };

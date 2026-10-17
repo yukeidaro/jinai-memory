@@ -395,9 +395,9 @@ test("every successful populated operation fires onTouch with unique nonempty no
   const { preference } = await mealMemories(memory);
   await memory.open({ user: "alice", id: preference.id, source: "cursor" });
   await memory.recall({ user: "alice", query: "夕飯", source: "copilot" });
-  await memory.orient({ user: "alice" });
+  await memory.orient({ user: "alice", source: "chatgpt" });
   assert.deepEqual(touches.map((item) => item.op), ["remember", "remember", "open", "recall", "orient"]);
-  assert.deepEqual(touches.map((item) => item.source), ["claude", "chatgpt", "cursor", "copilot", undefined]);
+  assert.deepEqual(touches.map((item) => item.source), ["claude", "chatgpt", "cursor", "copilot", "chatgpt"]);
   for (const item of touches) {
     assert.equal(item.user, "alice");
     assert.equal(item.at, START);
