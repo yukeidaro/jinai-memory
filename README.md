@@ -267,6 +267,80 @@ and meal from ChatGPT, then ask Claude to open the dinner topic before answering
 The map is rebuilt on each `tools/list`; call `orient` explicitly if the client
 caches an older tool description. Responses depend on the model and its tool use.
 
+## Import your own Claude Code memory
+
+Run the dependency-free importer locally with Node.js 24. **Never add personal
+files, import state, tokens, or imported content to this repository.** The
+checked-in `test/fixtures/import-home` contains fictional examples only.
+
+First preview the metadata-only list in PowerShell:
+
+```powershell
+node .\scripts\import-local.mjs
+```
+
+The default is a **dry run**: no network requests and no state writes. It lists
+status, kind, title, home-relative file path, and character count, never note
+bodies or summaries. Review the titles and paths before enabling import.
+
+The importer finds Claude Code skills (`~/.claude/skills/*/SKILL.md`), project
+memory (`~/.claude/projects/*/memory/*.md`, excluding the `MEMORY.md` index),
+global instructions (`~/.claude/CLAUDE.md`), and Copilot skills
+(`~/.copilot/skills/*/SKILL.md`). Skills become facts; feedback becomes a
+preference, project memory a decision, and other memory a fact. Only the final
+segment of an encoded project folder is used as its project tag, not its full
+path. Instructions split at `##` headings into preferences; a nonempty preamble
+is preserved as its own entry, and a file without headings stays one entry.
+Markdown code fences do not create sections. Text over 20,000 Unicode
+characters is shortened to that limit, including a final `(truncated)` marker.
+
+Set the base URL of **your own trusted server** and its token privately, then
+rerun with explicit consent:
+
+```powershell
+$env:JINAI_MEMORY_URL = "http://localhost:8787"
+# If you started this local server using the Quick start instructions:
+$env:JINAI_MEMORY_TOKEN = $env:MEMORY_TOKEN
+node .\scripts\import-local.mjs --yes
+```
+
+For a hosted server, supply `JINAI_MEMORY_TOKEN` through your private environment
+or secret manager and use HTTPS. There is deliberately **no `--token` option**:
+the token is read only from `JINAI_MEMORY_TOKEN`, never from command arguments.
+`--server` overrides `JINAI_MEMORY_URL`; `--source` sets the MCP author suffix
+(default `claude-code`, 1-20 lowercase letters, digits, or hyphens).
+
+Use `--home <directory>` to scan a different home, `--only
+skills,memory,claude-md,copilot` to select categories, and repeat `--include
+<file.md>` to add Markdown files, independently of `--only`. Included files
+use the same instruction-section conversion. For example:
+
+```powershell
+node .\scripts\import-local.mjs --home .\test\fixtures\import-home --only skills,copilot
+```
+
+The secret guard runs locally **before sending**, including on frontmatter and
+untruncated text. Matches are marked `secret-skip` with only the rule type;
+secret-looking titles/paths are redacted. Detection is heuristic, not a
+guarantee: review your files and do not import confidential data. Redirects are
+not followed, and neither tokens nor server error bodies are printed. Writes
+are sequential; failures are reported safely and other entries continue.
+
+Only successful imports update `<home>/.jinai-memory/import-state.json`.
+`--state <file>` chooses another location; keep it outside the repository.
+Unchanged file/heading hashes are skipped on later runs. Changed entries append
+**new memories**, not updates: MCP has no update tool. Repeated headings are
+tracked separately. Keep separate state files for different homes, servers, or
+tokens; state is local bookkeeping, not a server backup. Removing state or
+restarting an in-memory server does not reconcile earlier imports.
+
+Imported memories go only to the graph authorized by your token on the selected
+server. This demo maps its configured token to one `MEMORY_USER` graph; anyone
+sharing that token can access the same graph. The importer does not upload
+anything to this repository or other AI tools. The server's configured embedding
+provider still applies (OpenAI embeddings send note data to OpenAI; `fake` does
+not).
+
 ## MCP tools
 
 | Tool | Input | Result / behavior |
