@@ -40,6 +40,11 @@ let previousFocus;
 let splitMode = false;
 let lastInteraction = -10000;
 let controlsActive = false;
+let autoFitEnabled = true;
+let initialFitRequested = false;
+let fitPending = false;
+let fitTimer;
+let resizeFitFrame;
 
 function readToken(search) {
   const match = search.match(/(?:^\?|&)token(?:=([^&]*))?(?=&|$)/);
@@ -102,6 +107,37 @@ function connection(text, state) {
 function markInteraction() {
   lastInteraction = performance.now();
   if (graph) graph.controls().autoRotate = false;
+}
+
+function cancelAutoFit() {
+  autoFitEnabled = false;
+  fitPending = false;
+  clearTimeout(fitTimer);
+  cancelAnimationFrame(resizeFitFrame);
+}
+
+function fitGraph(padding = 60) {
+  const duration = motionPreference.matches ? 0 : 700;
+  if (data.nodes.length < 2) {
+    graph.cameraPosition({ x: 0, y: 30, z: 520 }, { x: 0, y: 0, z: 0 }, duration);
+  } else {
+    graph.zoomToFit(duration, padding);
+  }
+}
+
+function finishAutoFit() {
+  if (stopped || !autoFitEnabled || !fitPending) return;
+  fitPending = false;
+  clearTimeout(fitTimer);
+  fitGraph();
+}
+
+function requestAutoFit(initial = false) {
+  if (stopped || !autoFitEnabled) return;
+  fitPending = true;
+  clearTimeout(fitTimer);
+  if (data.nodes.length < 2) finishAutoFit();
+  else if (initial) fitTimer = setTimeout(finishAutoFit, 1500);
 }
 
 function hash(value) {
@@ -287,6 +323,10 @@ function syncGraph(snapshot) {
   });
   data = { nodes, links };
   if (topologyChanged) graph.graphData(data);
+  if (!initialFitRequested) {
+    initialFitRequested = true;
+    requestAutoFit(true);
+  }
   $("graph-count").textContent = `${nodes.filter((node) => node.type === "memory").length} memories · ${links.length} connections`;
   if (nodes.length) $("graph-message").hidden = true;
   else showMessage("A quiet constellation", "No memories yet. Save a thought from an AI tool to start.");
@@ -592,6 +632,7 @@ function renderDetails(node) {
 }
 
 function selectNode(node) {
+  cancelAutoFit();
   markInteraction();
   if (!selectedId) previousFocus = document.activeElement;
   selectedId = node.id;
@@ -681,6 +722,7 @@ function webglAvailable() {
 
 function stop() {
   stopped = true;
+  cancelAutoFit();
   clearTimeout(refreshTimer);
   clearTimeout(reconnectTimer);
   for (const timer of particleTimers) clearTimeout(timer);
@@ -721,9 +763,11 @@ async function start() {
     .linkDirectionalParticleColor((link) => link.particleColor || "#d2faff")
     .warmupTicks(motionPreference.matches ? 100 : 0)
     .cooldownTicks(320)
+    .onEngineStop(finishAutoFit)
     .onNodeClick(selectNode)
     .onNodeHover((node) => { hoveredId = node?.id || null; })
     .onNodeDrag((node) => {
+      cancelAutoFit();
       markInteraction();
       if (arrivals.delete(node.id)) draggedArrivals.add(node.id);
     })
@@ -734,14 +778,13 @@ async function start() {
   graph.d3Force("charge").strength(-85);
   graph.d3Force("link").distance((link) => link.type === "MENTIONED_BY" ? 85 : 60).strength(0.12);
   graph.d3Force("source-clusters", clusterForce);
-  graph.cameraPosition({ x: 0, y: 30, z: 520 });
   const controls = graph.controls();
   controls.enableDamping = true;
   controls.dampingFactor = 0.075;
   controls.autoRotateSpeed = 0.24;
   controls.minDistance = 35;
   controls.maxDistance = 1700;
-  controls.addEventListener("start", () => { controlsActive = true; markInteraction(); });
+  controls.addEventListener("start", () => { controlsActive = true; cancelAutoFit(); markInteraction(); });
   controls.addEventListener("end", () => { controlsActive = false; markInteraction(); });
   const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1.25, 0.65, 0.7);
   graph.renderer().setPixelRatio(Math.min(devicePixelRatio || 1, 2));
@@ -749,6 +792,12 @@ async function start() {
   graph.postProcessingComposer().addPass(bloom);
   const observer = new ResizeObserver(([entry]) => {
     graph.width(entry.contentRect.width).height(entry.contentRect.height);
+    cancelAnimationFrame(resizeFitFrame);
+    if (initialFitRequested && autoFitEnabled && !fitPending && entry.contentRect.width > 0 && entry.contentRect.height > 0) {
+      resizeFitFrame = requestAnimationFrame(() => {
+        if (!stopped && autoFitEnabled && !fitPending) fitGraph();
+      });
+    }
   });
   observer.observe($("graph"));
   addStars();
@@ -765,10 +814,14 @@ async function start() {
     splitMode = !splitMode;
     $("split-toggle").setAttribute("aria-pressed", String(splitMode));
     $("split-toggle").textContent = splitMode ? "Restore force layout" : "Group by AI";
+    requestAutoFit();
     graph.d3ReheatSimulation();
-    graph.cameraPosition({ x: 0, y: 0, z: splitMode ? 670 : 520 }, { x: 0, y: 0, z: 0 }, motionPreference.matches ? 0 : 800);
   });
-  $("fit-view").addEventListener("click", () => graph.zoomToFit(motionPreference.matches ? 0 : 700, 85));
+  $("fit-view").addEventListener("click", () => {
+    cancelAutoFit();
+    autoFitEnabled = true;
+    fitGraph(85);
+  });
   $("browse-toggle").addEventListener("click", () => toggleBrowser($("browser").hidden));
   $("browse-close").addEventListener("click", () => toggleBrowser(false));
   $("memory-search").addEventListener("input", renderBrowser);
