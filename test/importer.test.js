@@ -91,9 +91,9 @@ test("importer maps skill metadata, memory kinds, and only a short project tag",
     kind: "fact", title: "paper-folding",
     summary: "Make a checklist for folding imaginary paper shapes.",
     text: "## Steps\nUse a square sheet in the fictional workshop.\nCheck each fold before continuing.",
-    tags: ["skill", "paper-folding", "claude-code"],
+    tags: ["skill", "paper-folding", "claude-code", "paper", "folding"],
   });
-  assert.deepEqual(named("star-sorting").tags, ["skill", "star-sorting", "copilot"]);
+  assert.deepEqual(named("star-sorting").tags, ["skill", "star-sorting", "copilot", "star", "sorting"]);
   assert.equal(named("Compact workshop answers").kind, "preference");
   assert.equal(named("Orbit palette decision").kind, "decision");
   for (const title of ["Workshop preference", "Imaginary shape glossary", "Untyped workshop note"]) {
@@ -111,7 +111,7 @@ test("importer maps skill metadata, memory kinds, and only a short project tag",
     project: "C:\\Workshop\\orbit",
   }], { home: HOME })[0];
   assert.equal(unfamiliar.memory.kind, "fact");
-  assert.deepEqual(unfamiliar.memory.tags, ["memory", "unusual", "orbit"]);
+  assert.deepEqual(unfamiliar.memory.tags, ["memory", "unusual", "orbit", "SKILL"]);
 });
 
 test("importer supports category filters, repeated includes, and duplicate file avoidance", async () => {
@@ -130,6 +130,78 @@ test("importer supports category filters, repeated includes, and duplicate file 
   assert.equal(options.home, path.resolve(HOME));
   assert.equal(options.include.length, 2);
   assert.deepEqual(options.only, ["skills", "copilot"]);
+});
+
+test("importer adds up to three distinct hyphenated name words longer than two characters", () => {
+  for (const type of ["skills", "copilot", "memory"]) {
+    const [entry] = makePlan(
+      "---\nname: linkedin-post-ai-ux-a-linkedin-memory-pricing-extra\nmetadata:\n  type: feedback\n---\nFictional body.",
+      type,
+    );
+    const base = type === "memory"
+      ? ["memory", "feedback", "unknown"]
+      : ["skill", "linkedin-post-ai-ux-a-linkedin-memory-pricing-extra", type === "copilot" ? "copilot" : "claude-code"];
+    assert.deepEqual(entry.memory.tags, [...base, "linkedin", "post", ...(type === "memory" ? ["pricing"] : ["memory"])]);
+    assert.ok(entry.memory.tags.length <= 10);
+    assert.equal(new Set(entry.memory.tags).size, entry.memory.tags.length);
+    assert.ok(["ai", "ux", "a", "extra"].every((tag) => !entry.memory.tags.includes(tag)));
+  }
+  const [duplicate] = makePlan("---\nname: skill-skill-post\n---\nBody.");
+  assert.deepEqual(duplicate.memory.tags, ["skill", "skill-skill-post", "claude-code", "post"]);
+  const [short] = makePlan("---\nname: ai-ux-a\n---\nBody.");
+  assert.deepEqual(short.memory.tags, ["skill", "ai-ux-a", "claude-code"]);
+  const [fallback] = makePlan("Body.", "memory", "copilot-pricing.md");
+  assert.deepEqual(fallback.memory.tags, ["memory", "unknown", "copilot", "pricing"]);
+});
+
+test("importer derives instruction tags from heading words outside parentheses", () => {
+  const heading = "Copilot Pricing (private notes) Billing \uFF08internal only\uFF09 Copilot Limits Extra";
+  const [entry] = makePlan(
+    `## ${heading}\nFictional guidance.`,
+    "claude-md", "CLAUDE.md",
+  );
+  assert.deepEqual(entry.memory.tags, [
+    "instructions", heading, "Copilot", "Pricing", "Billing",
+  ]);
+  assert.ok(entry.memory.tags.length <= 10);
+  assert.equal(new Set(entry.memory.tags).size, entry.memory.tags.length);
+  const [short] = makePlan("## AI UX (private)\nFictional guidance.", "include", "extra.md");
+  assert.deepEqual(short.memory.tags, ["instructions", "AI UX (private)", "AI", "UX"]);
+});
+
+test("importer de-duplicates classification tags as well as concrete tags", () => {
+  const [entry] = planImport([{
+    ...synthetic("---\nname: memory-memory-feedback\nmetadata:\n  type: memory\n---\nBody.", "memory"),
+    project: "memory",
+  }], { home: HOME });
+  assert.deepEqual(entry.memory.tags, ["memory", "feedback"]);
+});
+
+test("importer displays home paths with tilde and outside paths as slash-normalized absolute paths", () => {
+  const filenames = [
+    path.join(HOME, "inside.md"),
+    path.join(HOME, "subdirectory", "..", "normalized.md"),
+    path.resolve(HOME, "..", "outside.md"),
+    path.resolve(`${HOME.replace(/[\\/]$/u, "")}-sibling`, "outside.md"),
+  ];
+  const entries = planImport(filenames.map((filename) => ({
+    filename, type: "include", text: "Fictional instructions.",
+  })), { home: HOME });
+  assert.deepEqual(entries.map((entry) => entry.from), [
+    "~/inside.md", "~/normalized.md",
+    ...filenames.slice(2).map((filename) => path.resolve(filename).replaceAll("\\", "/")),
+  ]);
+  assert.ok(entries.every((entry) => !entry.from.includes("\\")));
+  const listing = formatImportList(entries);
+  assert.ok(listing.includes(entries[2].from));
+  assert.ok(!listing.includes("~/../"));
+  if (process.platform === "win32") {
+    const drive = path.parse(HOME).root[0].toUpperCase() === "G" ? "H" : "G";
+    const filename = `${drive}:\\fictional\\outside.md`;
+    const [outside] = planImport([{ filename, type: "include", text: "Fictional." }], { home: HOME });
+    assert.equal(outside.from, `${drive}:/fictional/outside.md`);
+    assert.ok(!formatImportList([outside]).includes(`~/${drive}:/`));
+  }
 });
 
 test("importer parses minimal nested, quoted, BOM, CRLF, and block frontmatter", () => {

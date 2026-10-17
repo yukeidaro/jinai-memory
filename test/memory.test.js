@@ -156,6 +156,129 @@ test("orient applies the five-row limit after merging duplicate Topics", async (
   assert.ok(estimateTokens(result) <= 400);
 });
 
+test("orient excludes shared classification Topics from a 100-memory map", async (t) => {
+  const { memory, store, touches, embeds } = setup(t);
+  const specific = ["copilot", "pricing", "hamburger"];
+  for (let index = 0; index < 100; index += 1) {
+    await memory.remember({
+      user: "alice", source: "claude", kind: "fact",
+      title: `imported ${index}`, text: `Useful detail ${index}`,
+      tags: ["skill", "memory", "claude-code", ...(index < 9 ? [specific[Math.floor(index / 3)]] : [])],
+    });
+  }
+  const calls = embeds.length;
+  const result = await memory.orient({ user: "alice" });
+  assert.deepEqual(result.split("\n").slice(1).map((line) => line.split(" — ")[0]), specific);
+  assert.doesNotMatch(result, /skill|memory|claude-code/);
+  assert.ok(estimateTokens(result) <= 400);
+  assert.equal(embeds.length, calls);
+  assert.equal((await store.listNodes({ user: "alice", label: "Memory" })).length, 100);
+  const broad = await store.findNodes({ user: "alice", label: "Topic", where: { name: "skill" } });
+  assert.ok(!touches.at(-1).nodeIds.includes(broad[0].id));
+});
+
+test("orient applies both broad-topic thresholds with a strict 25-percent boundary", async (t) => {
+  for (const [total, shared, excluded] of [[32, 8, false], [31, 8, true], [20, 7, false]]) {
+    const { memory } = setup(t);
+    for (let index = 0; index < total; index += 1) {
+      await memory.remember({
+        user: "alice", source: "claude", kind: "fact",
+        title: `note ${index}`, text: "detail",
+        tags: [...(index < shared ? ["shared"] : []), ...(index === 0 ? ["focused"] : [])],
+      });
+    }
+    for (let index = 0; index < 10; index += 1) {
+      await memory.remember({
+        user: "bob", source: "claude", kind: "fact", title: `other ${index}`, text: "other",
+      });
+    }
+    const result = await memory.orient({ user: "alice" });
+    assert.equal(result.includes("shared —"), !excluded, `${shared}/${total}`);
+    assert.match(result, /focused —/);
+  }
+});
+
+test("orient restores broad Topics only when no specific candidates remain", async (t) => {
+  const { memory } = setup(t);
+  for (let index = 0; index < 8; index += 1) {
+    await memory.remember({
+      user: "alice", source: "claude", kind: "fact",
+      title: `note ${index}`, text: "useful detail", tags: ["skill", "memory"],
+    });
+  }
+  assert.deepEqual((await memory.orient({ user: "alice" })).split("\n"), [
+    "詳しくは open(title) で開く。", "skill・memory — 事実: useful detail",
+  ]);
+});
+
+test("orient uses one-line titles for empty summaries without changing stored notes or open", async (t) => {
+  const { memory, store } = setup(t);
+  for (const [index, summary] of ["", " \n\t "].entries()) {
+    const { id } = await memory.remember({
+      user: "alice", source: "claude", kind: "preference",
+      title: ` Useful\n title ${index} `, text: "Full body is not the summary.",
+      summary, tags: [`topic ${index}`],
+    });
+    const before = await store.getNode({ user: "alice", id });
+    assert.match(await memory.orient({ user: "alice" }), new RegExp(`好み: Useful title ${index}`));
+    assert.deepEqual(await store.getNode({ user: "alice", id }), before);
+    const opened = await memory.open({ user: "alice", title: `topic ${index}` });
+    assert.equal(opened.neighbors[0].summary, "");
+  }
+});
+
+test("orient omits Memories with empty summaries and titles, then selects useful peers of the same kind", async (t) => {
+  const { memory, store, touches } = setup(t);
+  const empty = await memory.remember({
+    user: "alice", source: "claude", kind: "preference",
+    title: "temporary title", summary: "", text: "", tags: ["mixed", "empty"],
+  });
+  await store.upsertNode({ user: "alice", id: empty.id, labels: ["Memory"], props: { title: " \n " } });
+  const useful = await memory.remember({
+    user: "alice", source: "claude", kind: "preference",
+    title: "Useful title", summary: "", text: "", tags: ["mixed"],
+  });
+  assert.deepEqual((await memory.orient({ user: "alice" })).split("\n"), [
+    "詳しくは open(title) で開く。", "mixed — 好み: Useful title",
+  ]);
+  assert.ok(touches.at(-1).nodeIds.includes(useful.id));
+  assert.ok(!touches.at(-1).nodeIds.includes(empty.id));
+});
+
+test("orient emits no topic rows when all summaries and titles are empty or missing", async (t) => {
+  const { memory, store } = setup(t);
+  await store.upsertNode({
+    user: "alice", id: "empty-topic", labels: ["Topic"], props: { name: "empty", createdAt: START },
+  });
+  for (const [index, props] of [{ title: "", summary: "" }, { title: " \t", summary: "\n" }, {}].entries()) {
+    const id = `empty-${index}`;
+    await store.upsertNode({
+      user: "alice", id, labels: ["Memory"],
+      props: { kind: "preference", createdAt: START, ...props },
+    });
+    await store.addEdge({ user: "alice", from: id, to: "empty-topic", type: "ABOUT" });
+  }
+  const result = await memory.orient({ user: "alice" });
+  assert.doesNotMatch(result, / — |好み:/);
+  assert.ok(estimateTokens(result) <= 400);
+});
+
+test("orient does not let empty Topics consume any of its five rows", async (t) => {
+  const { memory, store } = setup(t);
+  const { id } = await memory.remember({
+    user: "alice", source: "claude", kind: "preference",
+    title: "temporary title", text: "", summary: "", tags: ["empty"],
+  });
+  await store.upsertNode({ user: "alice", id, labels: ["Memory"], props: { title: "" } });
+  for (const tag of ["one", "two", "three", "four", "five"]) {
+    await memory.remember({
+      user: "alice", source: "claude", kind: "fact", title: tag, text: "detail", tags: [tag],
+    });
+  }
+  assert.deepEqual((await memory.orient({ user: "alice" })).split("\n").slice(1).map((line) => line.split(" — ")[0]),
+    ["one", "two", "three", "four", "five"]);
+});
+
 test("open resolves Topic names and Memory ids or titles with the required shapes", async (t) => {
   const { memory, embeds } = setup(t);
   const { preference, event } = await mealMemories(memory);

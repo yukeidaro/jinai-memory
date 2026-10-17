@@ -5,6 +5,9 @@ const ALL = Number.MAX_SAFE_INTEGER;
 const KINDS = new Set(["preference", "event", "fact", "decision"]);
 const KIND_IMPORTANCE = { preference: 3, decision: 2, fact: 1, event: 0 };
 const GUIDE = "詳しくは open(title) で開く。";
+// Common classification tags should not crowd out specific topics or alter small demo maps.
+const BROAD_TOPIC_RATIO = 0.25;
+const BROAD_TOPIC_MIN_MEMORIES = 8;
 
 function requiredString(value, name) {
   if (typeof value !== "string" || !value.trim()) {
@@ -45,6 +48,10 @@ function oneLine(text) {
 
 function summaryOf(node) {
   return oneLine(node.props.summary ?? Array.from(node.props.text ?? "").slice(0, 80).join(""));
+}
+
+function orientSummaryOf(node) {
+  return summaryOf(node) || oneLine(node.props.title ?? "");
 }
 
 function titleOf(node) {
@@ -341,6 +348,7 @@ export function createMemory({ store, embedder, now = () => new Date(), onTouch 
     async orient({ user, source }) {
       requiredString(user, "user");
       const at = isoDate(now());
+      const memoryCount = (await store.listNodes({ user, label: "Memory", limit: ALL })).length;
       const ranked = [];
       for (const topic of await store.listNodes({ user, label: "Topic" })) {
         const entries = (await store.neighbors({
@@ -354,29 +362,35 @@ export function createMemory({ store, embedder, now = () => new Date(), onTouch 
           if (node.props.kind === "preference" || node.props.kind === "fact") importance += 1;
         }
         importance += Math.max(...entries.map((node) => Math.exp(-age(node, at) / 30)));
-        ranked.push({ topic, entries, importance });
+        const selected = ["preference", "event", "fact", "decision"]
+          .map((kind) => entries.find((node) => node.props.kind === kind && orientSummaryOf(node)))
+          .filter(Boolean).slice(0, 3);
+        const count = new Set(entries.map((node) => node.id)).size;
+        const broad = count >= BROAD_TOPIC_MIN_MEMORIES && count > memoryCount * BROAD_TOPIC_RATIO;
+        ranked.push({ topic, entries, selected, importance, broad });
       }
-      ranked.sort((a, b) =>
+      const visible = ranked.filter(({ selected }) => selected.length);
+      const specific = visible.filter(({ broad }) => !broad);
+      const candidates = specific.length ? specific : visible;
+      candidates.sort((a, b) =>
         b.importance - a.importance || dateOf(b.entries[0]) - dateOf(a.entries[0]));
       const groups = new Map();
-      for (const { topic, entries } of ranked) {
+      for (const { topic, entries, selected } of candidates) {
         const key = JSON.stringify([...new Set(entries.map((node) => node.id))].sort());
         const group = groups.get(key);
         if (group) group.topics.push(topic);
-        else groups.set(key, { topics: [topic], entries });
+        else groups.set(key, { topics: [topic], selected });
       }
       const lines = [GUIDE];
       const touched = [];
-      for (const { topics, entries } of [...groups.values()].slice(0, 5)) {
-        const selected = ["preference", "event", "fact", "decision"]
-          .map((kind) => entries.find((node) => node.props.kind === kind)).filter(Boolean).slice(0, 3);
+      for (const { topics, selected } of [...groups.values()].slice(0, 5)) {
         const fragments = selected.map((node) => {
           const days = daysAgo(node, at);
           const relative = days === 0 ? "今日" : days === 1 ? "昨日" : `${days}日前`;
           const label = {
             preference: "好み", event: relative, fact: "事実", decision: "決定",
           }[node.props.kind];
-          return `${label}: ${shortText(summaryOf(node), 45)}`;
+          return `${label}: ${shortText(orientSummaryOf(node), 45)}`;
         });
         const names = topics.map((topic) => oneLine(topic.props.name)).join("・");
         const line = `${shortText(names, 50)} — ${fragments.join(" / ")}`;

@@ -20,6 +20,16 @@ function firstLine(value) {
   return Array.from(value.trim().split(/[\r\n]/u, 1)[0]).slice(0, 160).join("");
 }
 
+function nameWords(name) {
+  return name.split("-").map((word) => word.trim()).filter((word) => Array.from(word).length > 2);
+}
+
+function importTags(base, words) {
+  const tags = [...new Set(base)];
+  const specific = [...new Set(words)].filter((word) => !tags.includes(word)).slice(0, 3);
+  return [...tags, ...specific].slice(0, 10);
+}
+
 function scalar(value) {
   const text = value.trim();
   if (text.startsWith('"')) {
@@ -186,7 +196,9 @@ export function planImport(files, { home, state = {} }) {
   const root = resolvePath(home);
   return files.flatMap((file) => {
     const { attributes, body, header } = parseFrontmatter(file.text);
-    const relative = path.relative(root, resolvePath(file.filename)).replaceAll("\\", "/");
+    const filename = resolvePath(file.filename);
+    const relative = path.relative(root, filename).replaceAll("\\", "/");
+    const outside = relative === ".." || relative.startsWith("../") || path.isAbsolute(relative);
     const basename = path.basename(file.filename.replace(/[\\/]/gu, path.sep));
     const name = textAttribute(attributes, "name", basename.replace(/\.md$/iu, ""));
     const description = textAttribute(attributes, "description", "");
@@ -195,7 +207,7 @@ export function planImport(files, { home, state = {} }) {
       notes = [{
         heading: "", raw: file.text, kind: "fact", title: name,
         summary: firstLine(description), text: body,
-        tags: ["skill", name, file.type === "copilot" ? "copilot" : "claude-code"],
+        tags: importTags(["skill", name, file.type === "copilot" ? "copilot" : "claude-code"], nameWords(name)),
       }];
     } else if (file.type === "memory") {
       const type = textAttribute(attributes.metadata ?? {}, "type", "unknown");
@@ -204,13 +216,15 @@ export function planImport(files, { home, state = {} }) {
         heading: "", raw: file.text,
         kind: type === "feedback" ? "preference" : type === "project" ? "decision" : "fact",
         title: name, summary: firstLine(description), text: body,
-        tags: ["memory", type, project],
+        tags: importTags(["memory", type, project], nameWords(name)),
       }];
     } else {
       notes = splitInstructions(body).map(({ heading, text }) => ({
         heading, raw: `${header}\n${heading}\n${text}`, kind: "preference",
         title: heading ? `${basename} / ${heading}` : basename,
-        summary: "", text, tags: ["instructions", heading || basename],
+        summary: "", text,
+        tags: importTags(["instructions", heading || basename],
+          heading.replace(/\([^)]*\)|\uFF08[^\uFF09]*\uFF09/gu, " ").match(/[\p{L}\p{N}]+/gu) ?? []),
       }));
     }
     const occurrences = new Map();
@@ -229,7 +243,7 @@ export function planImport(files, { home, state = {} }) {
       return {
         key, hash, secret: secret?.kind, truncated, change,
         status: secret ? "secret-skip" : change === "unchanged" ? change : truncated ? "truncated" : change,
-        from: `~/${relative}`, chars: Array.from(text).length,
+        from: outside ? filename.replaceAll("\\", "/") : `~/${relative}`, chars: Array.from(text).length,
         memory: { ...note, text },
       };
     });
