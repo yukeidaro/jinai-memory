@@ -43,6 +43,9 @@ test("MCP negotiates all supported protocol versions and falls back for unknown 
     assert.deepEqual(reply.result.capabilities, { tools: { listChanged: false } });
     assert.deepEqual(reply.result.serverInfo, { name: "jinai-memory", version: "0.1.0" });
     assert.match(reply.result.instructions, /Memory map.*open.*remember/su);
+    assert.ok(reply.result.instructions.split("\n").length <= 5);
+    assert.match(reply.result.instructions, /even without a request/u);
+    assert.match(reply.result.instructions, /Never store passwords/u);
   }
   assert.deepEqual((await request("ping")).result, {});
 });
@@ -65,8 +68,14 @@ test("tools/list exposes exactly four schemas and succeeds with an empty graph o
   const reply = await request("tools/list");
   assert.deepEqual(reply.result.tools.map((tool) => tool.name), ["remember", "open", "recall", "orient"]);
   for (const tool of reply.result.tools) {
+    assert.equal(typeof tool.title, "string");
+    assert.ok(tool.title.length > 0);
+    assert.deepEqual(tool.annotations, tool.name === "remember"
+      ? { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+      : { readOnlyHint: true, openWorldHint: false });
     assert.equal(tool.inputSchema.type, "object");
     assert.equal(tool.inputSchema.additionalProperties, false);
+    assert.ok(tool.description.length <= 600);
   }
   assert.match(reply.result.tools[1].description, /Memory map:/u);
   const remember = reply.result.tools[0];
@@ -74,6 +83,11 @@ test("tools/list exposes exactly four schemas and succeeds with an empty graph o
   assert.equal(remember.inputSchema.properties.tags.maxItems, 10);
   assert.equal(remember.inputSchema.properties.text.maxLength, 20_000);
   assert.match(remember.description, /preference.*event.*3-5/su);
+  assert.match(remember.description, /even without a request/u);
+  assert.match(remember.description, /Japanese and English/u);
+  assert.match(remember.description, /After saving.*acknowledge/su);
+  assert.match(reply.result.tools[1].description, /Before answering.*closest one once/su);
+  assert.match(reply.result.tools[1].description, /Do not call if the map has no relevant entries/u);
   const empty = createMcpHandler({ memory: { ...memory, orient: async () => "" } });
   const emptyReply = await empty({ jsonrpc: "2.0", id: 1, method: "tools/list" }, CTX);
   assert.ok(emptyReply.result.tools[1].description.endsWith("Memory map:\n"));
@@ -114,7 +128,67 @@ test("all four tools use the real memory layer and propagate user, source, and r
   assert.ok(result(await call("recall", { query: "夕飯" })).preferences.some((item) => item.id === saved.id));
   assert.match(result(await call("orient", {})), /ハンバーグ/u);
   assert.deepEqual(new Set(touches.map((event) => event.op)), new Set(["remember", "open", "recall", "orient"]));
-  assert.ok(touches.filter((event) => event.op !== "orient").every((event) => event.source === "claude"));
+  assert.ok(touches.every((event) => event.source === "claude"));
+});
+
+test("orient and tools/list include the caller source in empty and populated map notifications", async (t) => {
+  const { call, request, touches } = setup(t);
+  for (const populated of [false, true]) {
+    if (populated) result(await call("remember", NOTE));
+    for (const source of ["claude", "chatgpt"]) {
+      touches.length = 0;
+      const ctx = { user: "alice", source };
+      await request("tools/list", undefined, ctx);
+      result(await call("orient", {}, ctx));
+      assert.equal(touches.length, 2);
+      for (const event of touches) {
+        assert.equal(event.op, "orient");
+        assert.equal(event.source, source);
+        assert.equal(event.user, ctx.user);
+        assert.equal(event.nodeIds.length > 0, populated);
+      }
+    }
+  }
+});
+
+test("remember rejects secrets in every stored field without leaking values or changing the graph", async (t) => {
+  const { call, store, touches } = setup(t);
+  result(await call("remember", NOTE));
+  const before = await store.listNodes({ user: "alice" });
+  const touchCount = touches.length;
+  const secrets = [
+    ["api_key", `sk-${"fake".repeat(8)}`],
+    ["aws_access_key", `AKIA${"FAKE".repeat(4)}`],
+    ["github_token", `ghp_${"fake".repeat(9)}`],
+    ["github_token", `github_pat_${"fake".repeat(20)}`],
+    ["slack_token", `xoxb-${"fake-".repeat(6)}fake`],
+    ["private_key", "-----BEGIN TEST PRIVATE KEY-----"],
+    ["password", "password: fake-demo-password"],
+    ["card_number", "4111-1111-1111-1111"],
+  ];
+  for (const [kind, value] of secrets) {
+    for (const field of ["title", "text", "summary", "tags"]) {
+      const reply = await call("remember", { ...NOTE, [field]: field === "tags" ? [value] : value });
+      assert.equal(reply.error, undefined);
+      assert.equal(reply.result.isError, true);
+      assert.equal(reply.result.content[0].text,
+        `This looks like a secret (${kind}). Jin AI Memory does not store secrets.`);
+      assert.ok(!JSON.stringify(reply).includes(value));
+      assert.deepEqual(await store.listNodes({ user: "alice" }), before);
+      assert.equal(touches.length, touchCount);
+    }
+  }
+});
+
+test("remember accepts ordinary preferences, phone numbers, dates, prices, and password changes without values", async (t) => {
+  const { call, store } = setup(t);
+  for (const text of [
+    "ハンバーグが好き", "電話は 03-1234-5678", "2026-10-17", "価格は 1,980 円",
+    "パスワードを変えた（値なし）",
+  ]) {
+    result(await call("remember", { ...NOTE, text }));
+  }
+  assert.equal((await store.listNodes({ user: "alice", label: "Memory" })).length, 5);
 });
 
 test("cross-client dinner flow returns yesterday's event with days_ago 1", async (t) => {

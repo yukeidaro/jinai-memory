@@ -338,7 +338,7 @@ export function createMemory({ store, embedder, now = () => new Date(), onTouch 
       return result;
     },
 
-    async orient({ user }) {
+    async orient({ user, source }) {
       requiredString(user, "user");
       const at = isoDate(now());
       const ranked = [];
@@ -389,7 +389,7 @@ export function createMemory({ store, embedder, now = () => new Date(), onTouch 
         const [latest] = await store.listNodes({ user, label: "Memory", limit: 1 });
         if (latest) touched.push(latest.id);
       }
-      await touch(user, "orient", undefined, touched, at);
+      await touch(user, "orient", source, touched, at);
       return lines.join("\n");
     },
   };
