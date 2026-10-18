@@ -176,6 +176,14 @@ $env:JINAI_MEMORY_TOKEN = "<token>"   # or leave it unset and type it at the hid
 npx github:yukeidaro/jinai-memory init --server https://<host>
 ```
 
+> **Bring your own server and token.** The hosted instance at `jinai-memory.onrender.com`
+> is invite-only: it serves the demo and the author's own memory, and unknown tokens get
+> `404`. To try the full flow, [deploy your own](docs/DEPLOY.md) (Render Blueprint plus a
+> free FalkorDB Cloud instance), pick your own token in `MEMORY_USERS`, and pass your host
+> with `--server`. `init` does not yet check the token against the server, so a wrong
+> token or host still writes a config that will return `404`; run `remove` and try again.
+> Without a server, the [live preview](https://jinai-memory.onrender.com/?mock=1) shows the UI on sample data.
+
 It detects Claude Code, Cursor, VS Code, Copilot CLI, Codex and Gemini CLI and adds the
 memory server to each one's MCP config (with a backup beside each changed file).
 For claude.ai and ChatGPT it shows where to paste the connector URL; `--copy claude`
