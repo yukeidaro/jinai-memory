@@ -4,17 +4,18 @@ import { EventEmitter, once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { createEmbedder } from "../src/embedder.js";
 import { createEventHub } from "../src/events.js";
 import { createMemory } from "../src/memory.js";
 import { createServer } from "../src/server.js";
 import { createMemoryStore } from "../src/store/memory-store.js";
 import { captureConfig, createDemoClient, dinnerMemories, seedMemories } from "./capture/scenario.mjs";
-import { FRAME_INTERVAL, JPEG_QUALITY, startFrameCapture } from "./capture/capture.mjs";
+import { FRAME_INTERVAL, GROUP_SETTLE_MS, JPEG_QUALITY, recordVerifiedBody, sceneState, startFrameCapture } from "./capture/capture.mjs";
 import { loadClips, validateOutput } from "./render.mjs";
 import {
   buildTimeline, CYPHER, DURATION, FPS, FRAME_INDEXES, frameAtTime,
-  HEIGHT, MAX_SCENE_BYTES, SCENES, validateFrameIndex, WIDTH,
+  HEIGHT, isVerifiedSceneState, MAX_SCENE_BYTES, SCENES, VERIFIED_BODY_SECONDS, validateFrameIndex, WIDTH,
 } from "./src/timeline.mjs";
 
 const videoDir = fileURLToPath(new URL("./", import.meta.url));
@@ -113,6 +114,93 @@ function jpegHeader(width = WIDTH, height = HEIGHT) {
   return bytes;
 }
 
+function verifiedState(id) {
+  return {
+    splitPressed: id === "group" ? "true" : "false",
+    splitLabel: id === "group" ? "Restore force layout" : "Group by AI",
+    detailsVisible: id === "read",
+    detailTitle: id === "read" ? dinnerMemories()[1].title : "",
+    detailSource: id === "read" ? "ChatGPT" : "",
+    detailKind: id === "read" ? "event" : "",
+    browserHidden: true,
+  };
+}
+
+function verifiedBody(id) {
+  return {
+    startSeconds: 1.7, durationSeconds: VERIFIED_BODY_SECONDS,
+    state: verifiedState(id), endState: verifiedState(id),
+  };
+}
+
+async function verifySceneBodies() {
+  assert.equal(GROUP_SETTLE_MS, 12_000);
+  assert.equal(VERIFIED_BODY_SECONDS, 6);
+  const bounds = { left: 1488, top: 96, right: 1896, bottom: 1012, width: 408, height: 916 };
+  const style = { display: "block", visibility: "visible" };
+  const details = { hidden: false, getBoundingClientRect: () => bounds };
+  const elements = {
+    "#details": details,
+    "#split-toggle": { getAttribute: () => "false", textContent: "Group by AI" },
+    "#detail-title": { textContent: dinnerMemories()[1].title },
+    "#detail-source": { textContent: "ChatGPT" },
+    "#detail-kind": { textContent: "event" },
+    "#browser": { hidden: true },
+  };
+  const domPage = {
+    async evaluate(callback) {
+      return runInNewContext(`(${callback.toString()})()`, {
+        document: { querySelector: (selector) => elements[selector] },
+        getComputedStyle: () => style, innerWidth: WIDTH, innerHeight: HEIGHT,
+      });
+    },
+  };
+  assert.ok(isVerifiedSceneState("read", await sceneState(domPage)));
+  for (const [target, key, invalid] of [
+    [details, "hidden", true], [style, "display", "none"],
+    [style, "visibility", "hidden"], [bounds, "width", 0], [bounds, "left", -1],
+    [bounds, "right", WIDTH + 1], [bounds, "bottom", HEIGHT + 1],
+  ]) {
+    const previous = target[key];
+    target[key] = invalid;
+    assert.equal((await sceneState(domPage)).detailsVisible, false);
+    target[key] = previous;
+  }
+  delete elements["#details"];
+  assert.equal((await sceneState(domPage)).detailsVisible, false);
+  elements["#details"] = details;
+  for (const id of ["read", "group"]) {
+    const calls = [];
+    const state = verifiedState(id);
+    const page = { async evaluate() { calls.push("state"); return state; } };
+    const recorder = { async mark() { calls.push("frame"); return 1.7; } };
+    const result = await recordVerifiedBody(page, recorder, id, async (milliseconds) => {
+      calls.push(milliseconds);
+    });
+    assert.deepEqual(calls, ["state", "frame", 6_500, "state"]);
+    assert.deepEqual(result.body, verifiedBody(id));
+    assert.ok(isVerifiedSceneState(id, result.body.state));
+    await assert.rejects(recordVerifiedBody({
+      async evaluate() { return {}; },
+    }, recorder, id), /required UI state is not visible/);
+    let checks = 0;
+    await assert.rejects(recordVerifiedBody({
+      async evaluate() { return checks++ ? {} : state; },
+    }, recorder, id, async () => {}), /did not survive the hold/);
+    await assert.rejects(recordVerifiedBody(page, {
+      async mark() { throw new Error("No frame after verification"); },
+    }, id, async () => {}), /No frame after verification/);
+  }
+  const scenes = await readFile(path.join(videoDir, "src", "scenes.jsx"), "utf8");
+  const demo = await readFile(path.join(videoDir, "src", "Demo.jsx"), "utf8");
+  assert.match(scenes, /clip \|\| !requireVerifiedState \? <Captions items=\{captions\} graph \/> : null/);
+  for (const id of ["read", "group"]) {
+    const block = demo.slice(demo.indexOf(`    ${id}:`), demo.indexOf("    ),", demo.indexOf(`    ${id}:`)));
+    assert.match(block, /requireVerifiedState/);
+  }
+  console.log("Scene-body guards verified with mocks: checked state, a new frame, 6.5-second hold, end-state check, failure propagation and read/group unavailable-caption wiring. No browser or JSX compiler was run.");
+}
+
 async function verifyFrameRecorder() {
   const directory = await mkdtemp(path.join(videoDir, ".verify-"));
   class Session extends EventEmitter {
@@ -142,7 +230,10 @@ async function verifyFrameRecorder() {
     await new Promise((resolve) => setTimeout(resolve, 10));
     session.frame(1_000.5);
     await new Promise((resolve) => setTimeout(resolve, 10));
+    const marker = recorder.mark();
+    await new Promise((resolve) => setTimeout(resolve, 10));
     session.frame(1_001.7);
+    assert.ok(Math.abs(await marker - 1.7) < 1e-9);
     await new Promise((resolve) => setTimeout(resolve, 10));
     now = 102;
     const index = await recorder.stop();
@@ -172,8 +263,10 @@ async function verifyFrameRecorder() {
     const fallback = await startFrameCapture(fallbackPage, path.join(directory, "fallback"), "read", {
       clock: () => now, warn: (message) => warnings.push(message),
     });
+    const fallbackMarker = fallback.mark();
     now = 200.5;
     await new Promise((resolve) => setTimeout(resolve, 160));
+    assert.equal(await fallbackMarker, 0.5);
     now = 201;
     const fallbackIndex = await fallback.stop();
     assert.equal(fallbackIndex.capture, "screenshot");
@@ -182,6 +275,34 @@ async function verifyFrameRecorder() {
     assert.ok(screenshotOptions.every((options) =>
       options.type === "jpeg" && options.quality === 94 && options.scale === "css"));
     assert.match(warnings[0], /CDP screencast unavailable/);
+
+    let screenshotCount = 0;
+    let releaseShot;
+    let notifyShot;
+    const shotStarted = new Promise((resolve) => { notifyShot = resolve; });
+    const pendingShot = new Promise((resolve) => { releaseShot = resolve; });
+    now = 250;
+    const inFlight = await startFrameCapture({
+      ...fallbackPage,
+      async screenshot() {
+        if (++screenshotCount === 2) {
+          notifyShot();
+          await pendingShot;
+        }
+        return jpegHeader();
+      },
+    }, path.join(directory, "in-flight"), "read", {
+      clock: () => now, warn: () => {},
+    });
+    now = 251;
+    await shotStarted;
+    const inFlightMarker = inFlight.mark();
+    now = 252;
+    releaseShot();
+    assert.equal(await inFlightMarker, 2);
+    now = 253;
+    const inFlightIndex = await inFlight.stop();
+    assert.deepEqual(inFlightIndex.frames.map(({ time }) => time), [0, 1, 2]);
 
     const silent = new Session();
     silent.frame = () => {};
@@ -239,6 +360,7 @@ async function verifyFrameRecorder() {
     }, path.join(directory, "aborted"), "read", { clock: () => now });
     now = 502;
     await aborted.stop({ publish: false });
+    await assert.rejects(aborted.mark(), /No new frame captured/);
     await assert.rejects(readFile(path.join(directory, "aborted", "index.json")), { code: "ENOENT" });
     console.log("Frame recorder verified with CDP mocks: official options, every-frame ACK, timestamp thinning, disk accounting, stop/detach, explicit screenshot fallback, no-frame timeout and ACK failure propagation. No browser was run.");
   } finally {
@@ -255,7 +377,7 @@ async function verifyRenderingInputs() {
     end += scene.durationInFrames;
   }
   assert.equal(end, DURATION);
-  assert.equal(DURATION, 4_875);
+  assert.equal(DURATION, 4_155);
   assert.deepEqual(
     SCENES.filter((scene) => !Object.hasOwn(FRAME_INDEXES, scene.id))
       .map(({ id, durationInFrames }) => [id, durationInFrames / FPS]),
@@ -265,8 +387,8 @@ async function verifyRenderingInputs() {
   assert.equal(SCENES[6].id, "ui-3d");
   const extended = buildTimeline({ group: { durationSeconds: 27.01 } });
   assert.equal(extended.scenes.find(({ id }) => id === "group").durationInFrames, 811);
-  assert.equal(extended.durationInFrames, DURATION + 271);
-  assert.throws(() => buildTimeline({ group: { durationSeconds: 40 } }), /Shorten capture waits/);
+  assert.equal(extended.durationInFrames, DURATION + 631);
+  assert.throws(() => buildTimeline({ group: { durationSeconds: 55 } }), /Shorten capture waits/);
   assert.throws(() => buildTimeline({ read: { durationSeconds: NaN } }), /Invalid read/);
   for (const seconds of [2.99, 4.01]) {
     assert.throws(() => buildTimeline({ "ui-3d": { durationSeconds: seconds } }), /3-4 seconds/);
@@ -305,6 +427,11 @@ async function verifyRenderingInputs() {
     assert.deepEqual(await loadClips(temporaryDir, warn), {});
     async function fixture(id, seconds) {
       const index = frameIndex(id, seconds);
+      if (id === "read" || id === "group") {
+        index.frames = [0, 0.5, 1.7, 2.1, 4.7, 7.7, 8.2].map((time, position) => ({
+          file: `${String(position + 1).padStart(6, "0")}.jpg`, time,
+        }));
+      }
       const indexPath = path.join(temporaryDir, FRAME_INDEXES[id]);
       await mkdir(path.dirname(indexPath), { recursive: true });
       await writeFile(indexPath, JSON.stringify(index));
@@ -319,12 +446,59 @@ async function verifyRenderingInputs() {
     assert.equal(clips.write.durationSeconds, 14);
     for (const [id, seconds] of [["read", 13], ["group", 27], ["ui-3d", 3.5]]) {
       manifest.clips[id] = { index: FRAME_INDEXES[id] };
+      if (id !== "ui-3d") manifest.clips[id].body = verifiedBody(id);
       await fixture(id, seconds);
     }
     await writeFile(manifestPath, JSON.stringify(manifest));
     const allClips = await loadClips(temporaryDir, warn);
     assert.deepEqual(Object.keys(allClips), ["write", "read", "group", "ui-3d"]);
-    assert.equal(buildTimeline(allClips).scenes.find(({ id }) => id === "group").durationInFrames, 810);
+    for (const id of ["read", "group"]) {
+      assert.equal(allClips[id].durationSeconds, 6);
+      assert.deepEqual(allClips[id].frames.map(({ file }) => file), ["000003.jpg", "000004.jpg", "000005.jpg"]);
+      assert.equal(allClips[id].frames[0].time, 0);
+      assert.equal(frameAtTime(allClips[id].frames, 0).file, "000003.jpg");
+      assert.equal(frameAtTime(allClips[id].frames, 5.99).file, "000005.jpg");
+      assert.equal(buildTimeline(allClips).scenes.find((scene) => scene.id === id).durationInFrames, 180);
+    }
+    for (const id of ["read", "group"]) {
+      const good = structuredClone(manifest.clips[id]);
+      const changes = [
+        (value) => { delete value.body; },
+        (value) => { value.body.startSeconds = -1; },
+        (value) => { value.body.startSeconds = "1.7"; },
+        (value) => { value.body.startSeconds = 1.8; },
+        (value) => { value.body.startSeconds = 8.2; },
+        (value) => { value.body.durationSeconds = 5; },
+        (value) => { value.body.state = {}; },
+        (value) => { value.body.endState = {}; },
+        ...(id === "group" ? [
+          (value) => { value.body.state.splitPressed = "false"; },
+          (value) => { value.body.state.splitPressed = true; },
+          (value) => { value.body.state.splitLabel = "Group by AI"; },
+        ] : [
+          (value) => { value.body.state.detailsVisible = false; },
+          (value) => { value.body.state.detailTitle = "A different dinner"; },
+          (value) => { value.body.state.detailTitle = null; },
+          (value) => { value.body.state.browserHidden = false; },
+          (value) => { value.body.state.detailSource = "Claude"; },
+          (value) => { value.body.state.detailKind = "preference"; },
+        ]),
+      ];
+      for (const change of changes) {
+        const invalid = structuredClone(good);
+        change(invalid);
+        manifest.clips[id] = invalid;
+        await writeFile(manifestPath, JSON.stringify(manifest));
+        const partial = await loadClips(temporaryDir, warn);
+        assert.equal(partial[id], undefined);
+        assert.ok(partial[id === "read" ? "group" : "read"]);
+        assert.ok(partial.write);
+        assert.ok(partial["ui-3d"]);
+      }
+      manifest.clips[id] = good;
+    }
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    assert.ok(warnings.some((message) => message.includes("without claim subtitles")));
     const lastFrame = path.join(temporaryDir, "frames", "ui-read", "000003.jpg");
     await rm(lastFrame);
     assert.deepEqual(Object.keys(await loadClips(temporaryDir, warn)), ["write", "group", "ui-3d"]);
@@ -351,7 +525,7 @@ async function verifyRenderingInputs() {
     }],
   };
   assert.deepEqual(validateOutput(metadata), {
-    seconds: 162.5, width: 1920, height: 1080, fps: 30, audioStreams: 0,
+    seconds: 138.5, width: 1920, height: 1080, fps: 30, audioStreams: 0,
   });
   const longer = structuredClone(metadata);
   longer.format.duration = String(extended.durationInFrames / FPS);
@@ -374,9 +548,10 @@ async function verifyRenderingInputs() {
   ]) {
     assert.throws(() => captureConfig({ JINAI_URL: url, JINAI_TOKEN: "disposable" }), /loopback/);
   }
-  console.log("Rendering inputs verified: measured 2:00-3:00 timeline, overlong group extension without speed-up/cutting, unchanged non-graph lengths, 9 stills, timestamp selection across dropped frames, validated JPEG paths/sizes/quality, missing/partial fallback, README-exact Cypher, output guards and loopback-only capture.");
+  console.log("Rendering inputs verified: six-second read/group windows selected from exact verified frames, invalid/missing state and incomplete-window fallback without claims, 2:00-3:00 timeline, unchanged other scene lengths, 9 stills, timestamp selection, JPEG guards, README-exact Cypher, output guards and loopback-only capture.");
 }
 
 await verifyScenario();
+await verifySceneBodies();
 await verifyFrameRecorder();
 await verifyRenderingInputs();

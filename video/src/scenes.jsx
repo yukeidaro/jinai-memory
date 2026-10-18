@@ -79,7 +79,7 @@ export function Conversation({ duration, assistant, image, heading, quote, facts
   );
 }
 
-export function GraphScene({ duration, clip, title, captions, read = false }) {
+export function GraphScene({ duration, clip, title, captions, read = false, requireVerifiedState = false }) {
   const frame = useCurrentFrame();
   const image = clip ? frameAtTime(clip.frames, frame / FPS) : null;
   return (
@@ -123,7 +123,7 @@ export function GraphScene({ duration, clip, title, captions, read = false }) {
           Highlights record server-side memory access, not proof of model reasoning.
         </div>
       ) : null}
-      <Captions items={captions} graph />
+      {clip || !requireVerifiedState ? <Captions items={captions} graph /> : null}
     </Scene>
   );
 }
