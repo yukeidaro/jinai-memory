@@ -8,9 +8,15 @@ One memory for every AI you use. Bring what you already have, share it between C
 
 **Want to use it with your own AIs?** Please **star this repository**. It tells us people want it, and starring is the easiest way to follow the public sign-up.
 
-<img src="docs/images/demo-claude-reads.png" alt="Illustrated dinner handoff: Claude opens shared memory containing a meal saved by ChatGPT." width="640">
+<img src="docs/images/real-claude-recalls.jpg" alt="Real screen: Claude answers 'Tonight's dinner is the Garlic Lemon Chicken Power Bowl' from the shared memory, while the FalkorDB graph lights up on the right." width="720">
 
-*Demo-video still with fictional data, not a client screenshot.*
+*Real screen recording, Oct 19, 2026: Claude reads tonight's dinner that ChatGPT saved a minute earlier. A calendar line is blurred for privacy; some app menus are in Japanese.*
+
+### Screenshots (real screens from the demo)
+
+| ChatGPT saves tonight's dinner on its own | One command connects your AI tools |
+| --- | --- |
+| <img src="docs/images/real-chatgpt-saves.jpg" alt="ChatGPT confirms it saved tonight's dinner choice to the shared memory; the graph shows the new note." width="420"> | <img src="docs/images/real-npx-init.jpg" alt="Terminal running npx jinai-memory init: Claude Code and Codex added, existing memory previewed." width="420"> |
 
 ## Demo
 
