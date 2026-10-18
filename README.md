@@ -22,6 +22,19 @@ The Render deployment serves the same preview at
 [jinai-memory.onrender.com/?mock=1](https://jinai-memory.onrender.com/?mock=1); its free service sleeps, so the first load can take about **50 seconds**.
 The preview uses built-in samples and simulated access events, not live database reads.
 
+**Two ways to try it**
+
+| You want to | Do this |
+| --- | --- |
+| Just look | Open the [GitHub Pages preview](https://yukeidaro.github.io/jinai-memory/?mock=1). Sample data, no token, nothing to install. |
+| Use it with your own AIs | Get a trial token, then run `npx github:yukeidaro/jinai-memory init --server https://jinai-memory.onrender.com` (see [Connect your AI](#connect-your-ai)). **Graph Hacks judges:** the token is in our submission form. **Everyone else:** [open an issue](https://github.com/yukeidaro/jinai-memory/issues/new?title=Trial%20token%20request) to request one. |
+
+> **Trial tokens are for evaluation only, provided as-is, with no warranty and no liability.**
+> The hosted server is a hackathon prototype. Do not import or save personal, confidential or work data:
+> a trial graph may be shared with other evaluators, and the free database hop is not encrypted.
+> Trial data may be deleted and tokens revoked at any time without notice. Run `npx github:yukeidaro/jinai-memory remove`
+> when you are done to take the connection out of your AI tools. See [Limitations & security](#limitations--security).
+
 **What you'll see**
 
 - Import existing AI context into linked Markdown memories.
@@ -179,7 +192,7 @@ $env:JINAI_MEMORY_TOKEN = "<token>"   # or leave it unset and type it at the hid
 npx github:yukeidaro/jinai-memory init --server https://<host>
 ```
 
-> **Bring your own server and token.** The hosted instance at `jinai-memory.onrender.com`
+> **Bring your own server and token, or use a [trial token](#demo).** The hosted instance at `jinai-memory.onrender.com`
 > is invite-only: it serves the demo and the author's own memory, and unknown tokens get
 > `404`. To try the full flow, [deploy your own](docs/DEPLOY.md) (Render Blueprint plus a
 > free FalkorDB Cloud instance), pick your own token in `MEMORY_USERS`, and pass your host
@@ -265,7 +278,7 @@ about missing `public/` is historical, since `public/index.html` is now included
 - **Bounded output, not bounded scans.** Map/neighborhood work grows with the graph; `recall` has no token cap. `open` may shorten text; the UI shows the newest 500 Memory nodes with up to 8,000 characters each.
 - **Prototype boundaries.** No delete/edit tool, per-agent permissions or automatic session sync. The browser needs WebGL and third-party rendering modules from jsDelivr. The server is not loopback-only; restrict inbound access on a trusted local network.
 
-- **No public sign-up yet.** The hosted server is invite-only, so the GitHub Pages [live preview](https://yukeidaro.github.io/jinai-memory/?mock=1) shows the UI on sample data and the full flow needs [your own server](docs/DEPLOY.md). The CLI runs from GitHub (`npx github:yukeidaro/jinai-memory`) and is not on the npm registry. `init` was run by hand on Windows; macOS and Linux config paths are covered by automated tests only.
+- **No public sign-up yet.** The hosted server is invite-only (trial tokens on request, evaluation only, no warranty or liability), so the GitHub Pages [live preview](https://yukeidaro.github.io/jinai-memory/?mock=1) shows the UI on sample data and the full flow needs [your own server](docs/DEPLOY.md). The CLI runs from GitHub (`npx github:yukeidaro/jinai-memory`) and is not on the npm registry. `init` was run by hand on Windows; macOS and Linux config paths are covered by automated tests only.
 - **Next.** Per-user token issuance and a rate-limited, isolated sandbox graph so anyone can try the full flow without deploying a server. If you want this, please star the repository.
 
 ## Built during Graph Hacks
