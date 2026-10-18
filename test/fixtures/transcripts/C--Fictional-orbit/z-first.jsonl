@@ -1,0 +1,12 @@
+{"type":"user","timestamp":"2026-10-15T09:00:00Z","sessionId":"orbit-one","cwd":"C:\\Fictional\\orbit","gitBranch":"feature/map","message":{"content":"<system-reminder>Injected private instructions, not a request.</system-reminder>Build a small orbit map."}}
+this is deliberately broken JSON
+{"type":"unknown-future-record","timestamp":"2000-01-01T00:00:00Z","message":{"content":"Unknown record must not become a request."}}
+{"type":"assistant","timestamp":"2026-10-15T09:01:00Z","message":{"content":[{"type":"thinking","thinking":"FICTIONAL_THINKING_NOT_IMPORTED"},{"type":"text","text":"FICTIONAL_AI_ANSWER_NOT_IMPORTED. Review https://github.com/fictional-lab/orbit/pull/12."},{"type":"tool_use","name":"Edit","input":{"file_path":"C:\\Fictional\\orbit\\src\\map.js","old_string":"FICTIONAL_OLD_CODE","new_string":"FICTIONAL_NEW_CODE"}},{"type":"tool_use","name":"Write","input":{"file_path":"C:/Fictional/orbit/src/map.js","content":"FICTIONAL_CODE_NOT_IMPORTED"}},{"type":"tool_use","name":"Write","input":{"file_path":"C:\\Elsewhere\\private\\notes.md","content":"FICTIONAL_EXTERNAL_CONTENT"}},{"type":"tool_use","name":"Skill","input":{"skill":"map-review"}},{"type":"tool_use","name":"Agent","input":{"subagent_type":"explore"}},{"type":"tool_use","name":"Bash","input":{"command":"gh pr view https://github.com/fictional-lab/orbit/pull/12"}}]}}
+{"type":"user","timestamp":"2026-10-15T09:03:00Z","message":{"content":[{"type":"tool_result","content":"FICTIONAL_TOOL_RESULT_NOT_IMPORTED"},{"type":"image","source":{"data":"FICTIONAL_IMAGE_NOT_IMPORTED"}}]}}
+{"type":"user","timestamp":"2026-10-15T09:04:00Z","message":{"content":"password: fictional-value-do-not-import"}}
+{"type":"user","timestamp":"2026-10-15T09:05:00Z","message":{"content":[{"type":"text","text":"<local-command-stdout>Automatic command output, not a request.</local-command-stdout>Keep the map compact and inspect C:\\Fictional\\orbit\\src\\map.js."}]}}
+{"type":"user","timestamp":"2026-10-15T09:06:00Z","message":{"content":"This fourth request is counted but not retained."}}
+{"type":"attachment","timestamp":"2026-10-15T09:07:00Z","attachment":{"content":"FICTIONAL_ATTACHMENT_NOT_IMPORTED"}}
+{"type":"file-history-snapshot","timestamp":"2026-10-15T09:08:00Z","snapshot":{"content":"FICTIONAL_SNAPSHOT_NOT_IMPORTED"}}
+{"type":"custom-title","timestamp":"2026-10-15T09:09:00Z","customTitle":"Old orbit title"}
+{"type":"custom-title","timestamp":"2026-10-15T09:10:00Z","customTitle":"Build the orbit map"}
