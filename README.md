@@ -14,7 +14,7 @@ One memory for every AI you use. Bring what you already have, share it between C
 
 ## Demo
 
-**Demo video:** <!-- TODO(Yu): YouTube link -->
+**Demo video:** [Watch on YouTube](https://youtu.be/1_GeZ6HTHMY) (about 1 minute)
 
 **Live preview, no token:** [Open the sample graph](https://yukeidaro.github.io/jinai-memory/?mock=1)
 or [open it in 2D](https://yukeidaro.github.io/jinai-memory/?mock=1&view=2d) (GitHub Pages, loads instantly).
