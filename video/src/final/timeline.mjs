@@ -1,7 +1,7 @@
 export const FPS = 30;
 export const WIDTH = 1920;
 export const HEIGHT = 1080;
-export const INTRO_FRAMES = 5 * FPS;
+export const INTRO_FRAMES = 7.5 * FPS;
 export const CLOSING_FRAMES = 10 * FPS;
 export const PENDING_FRAMES = 4 * FPS;
 export const MAX_RECORDING_SECONDS = 25;

@@ -24,17 +24,18 @@ function remotion(args) {
 
 export function validateFinalOutput(metadata, expectedFrames) {
   const stream = metadata.streams?.find((item) => item.codec_type === "video");
+  const audioStreams = metadata.streams?.filter((item) => item.codec_type === "audio").length ?? 0;
   const [numerator, denominator] = (stream?.avg_frame_rate ?? "").split("/").map(Number);
   const seconds = Number(metadata.format?.duration);
   if (
     stream?.codec_name !== "h264" || stream?.width !== WIDTH || stream?.height !== HEIGHT ||
     numerator / denominator !== FPS || Number(stream?.nb_read_frames) !== expectedFrames ||
     !Number.isFinite(seconds) || Math.abs(seconds - expectedFrames / FPS) > 1 / FPS ||
-    metadata.streams.some((item) => item.codec_type === "audio")
+    audioStreams !== 1
   ) {
-    throw new Error(`Final output must be ${expectedFrames} frames, 1920x1080, 30fps, H.264, with no audio stream.`);
+    throw new Error(`Final output must be ${expectedFrames} frames, 1920x1080, 30fps, H.264, with exactly one audio stream.`);
   }
-  return { frames: expectedFrames, seconds, width: WIDTH, height: HEIGHT, fps: FPS, audioStreams: 0 };
+  return { frames: expectedFrames, seconds, width: WIDTH, height: HEIGHT, fps: FPS, audioStreams };
 }
 
 async function main() {
@@ -51,7 +52,7 @@ async function main() {
     await remotion([
       "render", "src/index.jsx", "JinAIMemoryFinal", output, ...common,
       "--codec", "h264", "--pixel-format", "yuv420p", "--image-format", "png",
-      "--crf", "18", "--x264-preset", "veryfast", "--muted",
+      "--crf", "18", "--x264-preset", "veryfast",
     ]);
     const summary = validateFinalOutput(await probeMedia(output, { countFrames: true }), timeline.durationInFrames);
     await writeFile(path.join(out, "media-info-final.json"), `${JSON.stringify(summary, null, 2)}\n`);

@@ -15,8 +15,10 @@ function durations(seconds) {
 
 test("no recordings gives four 4-second pending cards and two fully visible stills", () => {
   const timeline = buildFinalTimeline(EMPTY_DURATIONS);
-  assert.equal(timeline.durationInFrames, 31 * FPS);
-  assert.deepEqual(timeline.scenes.map(({ startFrame }) => startFrame), [0, 150, 270, 390, 510, 630]);
+  assert.equal(timeline.durationInFrames, 33.5 * FPS);
+  assert.equal(timeline.scenes[0].durationInFrames, 225);
+  assert.equal(timeline.scenes.at(-1).durationInFrames, 300);
+  assert.deepEqual(timeline.scenes.map(({ startFrame }) => startFrame), [0, 225, 345, 465, 585, 705]);
   assert.deepEqual(timeline.scenes.slice(1, -1).map(({ pending }) => pending), [true, true, true, true]);
   assert.equal(CAPTION_FROM, 9);
   assert.equal(FADE_FRAMES, 12);
@@ -39,7 +41,7 @@ test("measurement writes a complete pending manifest without needing ffprobe whe
     const manifest = await measureFinalRecordings(directory);
     assert.deepEqual(manifest, EMPTY_DURATIONS);
     assert.deepEqual(JSON.parse(await readFile(path.join(directory, "durations.json"), "utf8")), manifest);
-    assert.equal(buildFinalTimeline(manifest).durationInFrames, 930);
+    assert.equal(buildFinalTimeline(manifest).durationInFrames, 1005);
     await mkdir(path.join(directory, RECORDINGS[0].file));
     await assert.rejects(measureFinalRecordings(directory), /must be a recording file/);
   } finally {
@@ -49,9 +51,9 @@ test("measurement writes a complete pending manifest without needing ffprobe whe
 
 test("recordings determine total length, keep sequence order, and move the closing still", () => {
   const timeline = buildFinalTimeline(durations([10, 15, 20, 10]));
-  assert.equal(timeline.durationInFrames, 70 * FPS);
+  assert.equal(timeline.durationInFrames, 72.5 * FPS);
   assert.deepEqual(timeline.scenes.slice(1, -1).map(({ file }) => file), RECORDINGS.map(({ file }) => file));
-  assert.equal(timeline.stills[1].frame, 62 * FPS);
+  assert.equal(timeline.stills[1].frame, 64.5 * FPS);
   let end = 0;
   for (const scene of timeline.scenes) {
     assert.equal(scene.startFrame, end);
@@ -64,7 +66,7 @@ test("partial recordings, fractional frames and the exact 25-second cap", () => 
   const timeline = buildFinalTimeline(durations([1.01, null, 25, 25.01]));
   assert.deepEqual(timeline.scenes.slice(1, -1).map(({ durationInFrames }) => durationInFrames), [31, 120, 750, 750]);
   assert.equal(timeline.scenes[2].pending, true);
-  assert.equal(buildFinalTimeline(durations([30, 60, 90, 120])).durationInFrames, 115 * FPS);
+  assert.equal(buildFinalTimeline(durations([30, 60, 90, 120])).durationInFrames, 117.5 * FPS);
   assert.equal(buildFinalTimeline(durations([0.001, null, null, null])).scenes[1].durationInFrames, 1);
 });
 
@@ -91,23 +93,29 @@ test("ffprobe prefers video duration, handles unavailable stream duration, and r
   }
 });
 
-test("MP4 must match measured frame count, H.264, 1920x1080, 30fps and zero audio", () => {
-  const frames = 31 * FPS;
+test("MP4 must match measured frame count, H.264, 1920x1080, 30fps and exactly one audio stream", () => {
+  const frames = 33.5 * FPS;
   const metadata = {
     streams: [{
       codec_type: "video", codec_name: "h264", width: 1920, height: 1080,
       avg_frame_rate: "30/1", nb_read_frames: String(frames),
-    }],
-    format: { duration: "31" },
+    }, { codec_type: "audio" }],
+    format: { duration: "33.5" },
   };
-  assert.equal(validateFinalOutput(metadata, frames).audioStreams, 0);
+  assert.equal(validateFinalOutput(metadata, frames).audioStreams, 1);
+  for (const codec of ["aac", "mp3", "opus"]) {
+    const valid = structuredClone(metadata);
+    valid.streams[1].codec_name = codec;
+    assert.equal(validateFinalOutput(valid, frames).audioStreams, 1);
+  }
   for (const change of [
-    (value) => { value.streams[0].nb_read_frames = "929"; },
+    (value) => { value.streams[0].nb_read_frames = "1004"; },
     (value) => { value.streams[0].codec_name = "vp9"; },
     (value) => { value.streams[0].width = 1280; },
     (value) => { value.streams[0].height = 720; },
     (value) => { value.streams[0].avg_frame_rate = "30000/1001"; },
     (value) => { value.format.duration = "32"; },
+    (value) => { value.streams.pop(); },
     (value) => { value.streams.push({ codec_type: "audio" }); },
   ]) {
     const invalid = structuredClone(metadata);

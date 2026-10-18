@@ -47,7 +47,7 @@ jobs:
       - name: Check final timeline and output guards
         run: node --test src/final/timeline.test.mjs
 
-      - name: Render and validate JinAIMemoryFinal as a silent 1080p MP4
+      - name: Render and validate JinAIMemoryFinal as a narrated 1080p MP4
         run: npm run render:final
 
       - name: Render intro and closing stills

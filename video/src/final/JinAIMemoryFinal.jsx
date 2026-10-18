@@ -1,5 +1,5 @@
 import React from "react";
-import { AbsoluteFill, OffthreadVideo, Sequence, staticFile, useCurrentFrame } from "remotion";
+import { AbsoluteFill, Audio, OffthreadVideo, Sequence, staticFile, useCurrentFrame } from "remotion";
 import { COLORS, MONO, SANS } from "../teaser/kit.jsx";
 import { buildFinalTimeline, CAPTION_FROM, FADE_FRAMES } from "./timeline.mjs";
 
@@ -116,6 +116,13 @@ export function JinAIMemoryFinal({ durations }) {
           {scene.id === "intro" ? <Intro durationInFrames={scene.durationInFrames} />
             : scene.id === "closing" ? <Closing durationInFrames={scene.durationInFrames} />
               : <Recording scene={scene} />}
+          {!scene.pending && (
+            <Sequence from={9}>
+              <Audio src={staticFile(`final/vo/${scene.id === "intro" ? "00-intro.mp3"
+                : scene.id === "closing" ? "06-closing.mp3"
+                  : scene.file.replace(/\.mp4$/, ".mp3")}`)} />
+            </Sequence>
+          )}
         </Sequence>
       ))}
     </AbsoluteFill>
