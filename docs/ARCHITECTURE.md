@@ -1,7 +1,7 @@
 # Architecture
 
 Jin AI Memory is one Node.js service exposing shared memory over MCP and a
-read-only 3D graph view. FalkorDB stores the persistent graph; without a configured
+read-only 2D/3D graph view. FalkorDB stores the persistent graph; without a configured
 `FALKORDB_URL`, the same memory layer uses an in-process development adapter.
 There are no backend package dependencies or build steps.
 
@@ -10,9 +10,9 @@ There are no backend package dependencies or build steps.
 ```mermaid
 flowchart TB
     Clients["Claude / ChatGPT / Cursor / Copilot"]
-    Browser["Browser: Three.js + 3d-force-graph"]
+    Browser["Browser: 3D (Three.js) / 2D (Canvas) force graph"]
     CDN["jsDelivr rendering modules"]
-    HTTP["server.js: token check, fixed user, source from MCP URL"]
+    HTTP["server.js: user from token, source from MCP URL"]
     MCP["mcp.js: JSON-RPC, four tool schemas, map in open description"]
     Memory["memory.js: write-time linking, orient, open, recall"]
     Embed["embedder.js: fake or OpenAI"]
@@ -42,9 +42,11 @@ flowchart TB
     Hub -->|"SSE touched node IDs"| Browser
 ```
 
-The service selects `MEMORY_USER` once (default `demo`). The MCP URL suffix
-identifies a source, not a tenant: Claude and ChatGPT share that user's graph.
-The store itself supports separate `memory:<user>` graphs. There is no account
+`MEMORY_USERS` maps user names to distinct tokens and overrides `MEMORY_TOKEN`
+and `MEMORY_USER`. Without it, the service uses one configured `MEMORY_USER`
+(default `demo`) and `MEMORY_TOKEN`. MCP, snapshots and SSE authenticate into
+the same per-user graph. The MCP URL suffix identifies a source, not a tenant:
+Claude and ChatGPT with the same token share `memory:<user>`. There is no account
 system, OAuth, or separate per-source authorization.
 
 ## Data model and indexes
@@ -60,6 +62,7 @@ flowchart LR
     A -->|MENTIONED_BY| S
     A -->|"SIMILAR: w"| B
     A -->|RELATES_TO| B
+    A -->|NEXT_STEP| B
 ```
 
 Only Memory nodes receive embeddings. The adapter removes embeddings from
@@ -76,8 +79,8 @@ tags from those edges.
 
 It checks existing vector dimension/similarity, creates missing indexes, and
 polls `db.indexes()` until all are `OPERATIONAL` (10-second readiness deadline,
-25 ms between unsuccessful polls). The HTTP startup calls it before listening,
-and every `remember` calls it again.
+25 ms between unsuccessful polls). HTTP startup calls it for each configured
+user before listening, and every `remember` calls it again.
 
 All graph names are validated. Cypher values use the client's `CYPHER` parameter
 prefix; dynamic label/relationship/property identifiers are backtick-quoted.
@@ -93,7 +96,7 @@ client's lazy schema lookups (`db.labels()`, `db.relationshipTypes()`,
 `db.propertyKeys()`) when decoding unfamiliar entity metadata. Each schema
 lookup adds a `GRAPH.QUERY`; the cache is cleared on reconnect.
 
-`getNode`, `findNodes`, `listNodes`, `upsertNode`, `addEdge`, and `neighbors`
+`getNode`, `findNodes`, `listNodes`, `upsertNode`, `addEdge`, `removeEdges`, and `neighbors`
 each issue one query. A `vectorSearch` invoked by the memory layer issues two:
 
 1. `MATCH (n:Memory) WHERE n.embedding IS NOT NULL RETURN count(n)`.
@@ -114,12 +117,15 @@ call follows this sequence:
 | Resolve `relatesTo` | `getNode` on each reference, then resolve by ID or exact Memory title / Topic name | 2 per ID or Memory-title match; 3 per Topic-title match |
 | Embed once | Embed title, text, and deduplicated tags together | 0 DB; 1 embedding call |
 | Ensure indexes | Read `db.indexes()`, create missing indexes, poll readiness | `I = 1 + C + P`, where `C` is missing indexes (0-4) and `P >= 1` readiness reads |
+| Resolve external ID | Look up the deterministic Memory ID when `externalId` is supplied | `e`, 0 or 1 |
 | Save Memory | `MERGE` by ID, merge props, set Memory label and `vecf32` embedding | 1 |
+| Replace outgoing links | On replacement, remove outgoing `ABOUT`, `MENTIONED_BY`, `SIMILAR` and `RELATES_TO` | `x`, 0 or 1 |
 | Find similar notes | Filtered vector search with `k = 6`, including the newly saved note | 2 |
 | Link similar notes | Exclude self, take up to 5 existing hits, require similarity at least 0.3, keep up to 3 | `s`, where `0 <= s <= 3` |
 | Add Topics | One name lookup, optional node upsert, and `ABOUT` edge per unique tag | `2t + nT` |
 | Add Source | One name lookup, optional node upsert, `MENTIONED_BY` edge | `2 + nS` |
 | Add explicit links | `RELATES_TO` edge for each resolved unique reference | `r` |
+| Link predecessor | If `follows` is supplied, look up its external Memory ID and add predecessor-to-current `NEXT_STEP` when found | `f + l`, each 0 or 1 |
 | Notify | `onTouch` with new note and linked nodes | 0 |
 
 Here `t` is unique tags, `nT` newly created Topics, `nS` is 1 for a new Source
@@ -127,7 +133,7 @@ and 0 otherwise, `r` is unique explicit references, and `D` is their total
 resolution query count. Total:
 
 ```text
-remember queries = D + I + 5 + s + 2t + nT + nS + r
+remember queries = D + I + 5 + s + 2t + nT + nS + r + e + x + f + l
 ```
 
 An already-operational schema normally makes `I = 2`; a new graph needs four
@@ -138,8 +144,10 @@ Each `SIMILAR` edge uses
 `w = 0.7 * similarity + 0.3 * exp(-age_in_days / 30)`. Age uses `occurredAt`
 when present, otherwise `createdAt`, clamped to zero for future dates.
 Topic edges have `w = 1`; Source and explicit edges have no assigned weight.
-The current memory layer never creates `NEXT_STEP`, although the store and
-snapshot support it.
+`externalId` replaces content at a deterministic ID within the user's graph;
+replacement preserves incoming edges and existing `NEXT_STEP` edges. `follows`
+references a predecessor's external ID in that same graph. The result is
+`{ id, replaced }`, plus `followsLinked` when `follows` was supplied.
 
 ### open
 
@@ -184,15 +192,19 @@ The internal method accepts a result `limit`, but the MCP schema exposes only
 
 ### orient and tools/list
 
-`orient` lists all Topics (**1** query), then reads `ABOUT` neighbors for each
-of the `T` Topics (**T** queries). If no Topic has a connected Memory, it also
-lists the newest Memory (**1** query) for touch notification.
+`orient` lists all Memories for a count (**1** query), lists all Topics (**1**),
+then reads `ABOUT` neighbors for each non-excluded Topic (**T** queries).
+Import classification/hash-like Topic names are excluded before neighborhood
+reads. If no remaining Topic has a connected Memory, it also lists the newest
+Memory (**1** query) for touch notification.
 
-**Total: `1 + T` queries, or `2 + T` for that empty/untagged case.**
+**Total: `2 + T` queries, or `3 + T` for that empty/untagged case.**
 There is no embedding call and no LLM-generated summary.
 
-Topics are ranked using recent events, preferences/facts, and recency. Topics
-with exactly the same connected Memory set share one map row. The output has
+Topics are ranked using recent events, preferences/facts, and recency. When
+specific topics exist, broad topics (at least 8 Memories and more than 25% of
+all Memories) are omitted. Topics with exactly the same connected Memory set
+share one map row. The output has
 at most **5 groups** with up to **3 kind-specific snippets** each and a
 **400-estimated-token** ceiling.
 
@@ -281,10 +293,15 @@ use of retrieved context.
 | `src/events.js` | In-process, user-filtered SSE hub, heartbeats and subscriber cleanup |
 | `public/index.html` | UI shell, import map, CDN module versions |
 | `public/app.js` | 3D graph, author colors, touch animation, snapshot refresh, SSE subscription and note panel |
+| `public/graph2d.js`, `public/view-mode.js` | Canvas force graph, shared interactions and persisted 2D/3D view selection |
 | `public/style.css` | Layout and visual styling |
 | `public/markdown.js` | Browser Markdown rendering and HTML escaping |
 | `public/mock.js` | Built-in fictional graph and simulated events |
 | `scripts/seed-demo.mjs` | Ten fictional notes written through four source-specific MCP URLs; optional dry-run |
+| `scripts/import.mjs` | Combined file/session import; counts-only dry run by default |
+| `scripts/import-local.mjs`, `src/importer.js` | Local skills, memory and instruction extraction; metadata preview and successful-only state |
+| `scripts/import-transcripts.mjs`, `src/transcript-extract.js` | Local session extraction; replacement via external IDs and chronological project links |
+| `src/secret-guard.js` | Heuristic secret checks before import sends and MCP saves |
 | `test/*.test.js` | Node tests for memory, scale, MCP/HTTP/SSE, snapshots, config, embeddings, client and opt-in real DB |
 | `.env.example` | Placeholder environment configuration; not loaded automatically |
 | `Dockerfile`, `render.yaml` | Node 24 container and Render Blueprint |
