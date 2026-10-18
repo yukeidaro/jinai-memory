@@ -25,7 +25,7 @@ export const RECORDINGS = [
     id: "chatgpt-claudecode",
     file: "04-chatgpt-claudecode.mp4",
     label: "Scene 4 \u2014 ChatGPT + Claude Code (recording pending)",
-    caption: "ChatGPT and Claude Code write to one graph in FalkorDB.",
+    caption: "ChatGPT saves tonight's dinner to one shared graph in FalkorDB.",
   },
   {
     id: "claude",
