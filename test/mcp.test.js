@@ -82,6 +82,15 @@ test("tools/list exposes exactly four schemas and succeeds with an empty graph o
   assert.ok(remember.inputSchema.required.includes("tags"));
   assert.equal(remember.inputSchema.properties.tags.maxItems, 10);
   assert.equal(remember.inputSchema.properties.text.maxLength, 20_000);
+  for (const key of ["externalId", "follows"]) {
+    const definition = remember.inputSchema.properties[key];
+    assert.equal(definition.type, "string");
+    assert.equal(definition.minLength, 1);
+    assert.equal(definition.maxLength, 200);
+    assert.equal(definition.pattern, "^[A-Za-z0-9:_.-]{1,200}$");
+    assert.ok(!remember.inputSchema.required.includes(key));
+    assert.match(definition.description, /取り込みツール/u);
+  }
   assert.match(remember.description, /preference.*event.*3-5/su);
   assert.match(remember.description, /even without a request/u);
   assert.match(remember.description, /Japanese and English/u);
@@ -149,6 +158,45 @@ test("orient and tools/list include the caller source in empty and populated map
       }
     }
   }
+});
+
+test("MCP remember returns replacement and follows status through the real memory layer", async (t) => {
+  const { call, store, touches } = setup(t);
+  const first = result(await call("remember", { ...NOTE, externalId: "cc-session:first" }));
+  assert.deepEqual(first, { id: first.id, replaced: false });
+  const input = { ...NOTE, externalId: "cc-session:next", follows: "cc-session:first" };
+  const next = result(await call("remember", input));
+  assert.deepEqual(next, { id: next.id, replaced: false, followsLinked: true });
+  const replaced = result(await call("remember", { ...input, text: "updated", tags: ["new"] }));
+  assert.deepEqual(replaced, { id: next.id, replaced: true, followsLinked: true });
+  assert.equal((await store.getNode({ user: "alice", id: next.id })).props.text, "updated");
+  const about = await store.neighbors({ user: "alice", id: next.id, types: ["ABOUT"] });
+  assert.deepEqual(about.map(({ node }) => node.props.name), ["new"]);
+  const links = await store.neighbors({ user: "alice", id: next.id, types: ["NEXT_STEP"] });
+  assert.deepEqual(links.map(({ edge }) => [edge.from, edge.to]), [[first.id, next.id]]);
+  assert.ok(touches.at(-1).nodeIds.includes(first.id));
+  const missing = result(await call("remember", {
+    ...NOTE, externalId: "cc-session:missing", follows: "cc-session:absent",
+  }));
+  assert.equal(missing.followsLinked, false);
+  assert.equal((await store.listNodes({ user: "alice", label: "Memory" })).length, 3);
+  const bob = result(await call("remember", input, { user: "bob", source: "claude" }));
+  assert.deepEqual(bob, { id: next.id, replaced: false, followsLinked: false });
+});
+
+test("MCP secret rejection cannot overwrite an existing externalId or change its edges", async (t) => {
+  const { call, store, touches } = setup(t);
+  const input = { ...NOTE, externalId: "cc-session:protected" };
+  const saved = result(await call("remember", input));
+  const nodes = await store.listNodes({ user: "alice" });
+  const edges = await store.neighbors({ user: "alice", id: saved.id });
+  const count = touches.length;
+  const reply = await call("remember", { ...input, text: "password: fake-demo-password", tags: ["new"] });
+  assert.equal(reply.result.isError, true);
+  assert.match(reply.result.content[0].text, /does not store secrets/u);
+  assert.deepEqual(await store.listNodes({ user: "alice" }), nodes);
+  assert.deepEqual(await store.neighbors({ user: "alice", id: saved.id }), edges);
+  assert.equal(touches.length, count);
 });
 
 test("remember rejects secrets in every stored field without leaking values or changing the graph", async (t) => {
@@ -229,6 +277,9 @@ test("tool argument validation rejects bad types, missing values, limits, dates,
     ["remember", { ...NOTE, tags: [1] }],
     ["remember", { ...NOTE, tags: [" "] }],
     ["remember", { ...NOTE, relatesTo: [false] }],
+    ...["externalId", "follows"].flatMap((key) =>
+      ["", " ", "bad/id", "bad\n", "bad\r\n", "日本語", "a".repeat(201), null, 1, [], {}]
+        .map((value) => ["remember", { ...NOTE, [key]: value }])),
     ["remember", { ...NOTE, user: "another" }],
     ["remember", { ...NOTE, source: "spoofed" }],
     ["remember", { ...NOTE, kind: "event" }],
@@ -261,6 +312,11 @@ test("remember accepts exact size limits, all kinds, and ISO timezone offsets", 
     }));
     assert.equal((await store.getNode({ user: "alice", id: saved.id })).props.text.length, 20_000);
   }
+  const saved = result(await call("remember", {
+    ...NOTE, externalId: "A0:_.-".padEnd(200, "x"), follows: "a".repeat(200),
+  }));
+  assert.equal(saved.replaced, false);
+  assert.equal(saved.followsLinked, false);
 });
 
 test("memory operation errors are tool errors without backend messages or stack traces", async (t) => {

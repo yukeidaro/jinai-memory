@@ -1,10 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isExcludedImportTopic } from "./importer.js";
 
 const DAY = 86_400_000;
 const ALL = Number.MAX_SAFE_INTEGER;
 const KINDS = new Set(["preference", "event", "fact", "decision"]);
 const KIND_IMPORTANCE = { preference: 3, decision: 2, fact: 1, event: 0 };
+const REPLACED_EDGE_TYPES = ["ABOUT", "MENTIONED_BY", "SIMILAR", "RELATES_TO"];
 const GUIDE = "詳しくは open(title) で開く。";
 // Common classification tags should not crowd out specific topics or alter small demo maps.
 const BROAD_TOPIC_RATIO = 0.25;
@@ -14,6 +15,18 @@ function requiredString(value, name) {
   if (typeof value !== "string" || !value.trim()) {
     throw new TypeError(`${name} must be a nonempty string`);
   }
+}
+
+function externalReference(value, name) {
+  if (value !== undefined && (
+    typeof value !== "string" || !/^[A-Za-z0-9:_.-]{1,200}$/u.test(value)
+  )) {
+    throw new TypeError(`${name} must contain 1-200 letters, digits, colons, underscores, dots or hyphens`);
+  }
+}
+
+function externalMemoryId(externalId) {
+  return `ext-${createHash("sha256").update(externalId).digest("hex").slice(0, 32)}`;
 }
 
 function stringArray(value, name) {
@@ -168,7 +181,10 @@ export function createMemory({ store, embedder, now = () => new Date(), onTouch 
   }
 
   return {
-    async remember({ user, source, kind, title, text, occurredAt, tags = [], summary, relatesTo = [] }) {
+    async remember({
+      user, source, kind, title, text, occurredAt, tags = [], summary, relatesTo = [],
+      externalId, follows,
+    }) {
       requiredString(user, "user");
       requiredString(source, "source");
       requiredString(title, "title");
@@ -177,6 +193,8 @@ export function createMemory({ store, embedder, now = () => new Date(), onTouch 
       if (summary !== undefined && typeof summary !== "string") {
         throw new TypeError("summary must be a string");
       }
+      externalReference(externalId, "externalId");
+      externalReference(follows, "follows");
       const topics = stringArray(tags, "tags");
       const related = stringArray(relatesTo, "relatesTo");
       const occurred = occurredAt === undefined ? undefined : isoDate(occurredAt);
@@ -190,7 +208,9 @@ export function createMemory({ store, embedder, now = () => new Date(), onTouch 
         }
         const embedding = await embed([title, text, topics.join(" ")].join("\n"));
         await store.ensureIndexes({ user, dim: embedder.dim });
-        const id = randomUUID();
+        const id = externalId === undefined ? randomUUID() : externalMemoryId(externalId);
+        const existing = externalId === undefined ? null : await store.getNode({ user, id });
+        const replaced = existing !== null;
         const props = {
           title,
           text,
@@ -200,7 +220,12 @@ export function createMemory({ store, embedder, now = () => new Date(), onTouch 
           createdAt: at,
         };
         if (occurred !== undefined || kind === "event") props.occurredAt = occurred ?? at;
+        else if (existing?.props.occurredAt !== undefined) props.occurredAt = null;
+        if (externalId !== undefined) props.externalId = externalId;
         await store.upsertNode({ user, id, labels: ["Memory"], props, embedding });
+        if (replaced) {
+          await store.removeEdges({ user, id, types: REPLACED_EDGE_TYPES, direction: "out" });
+        }
         const touched = [id];
         // Fetch one extra because the new, embedded note is itself a search hit.
         const matches = await store.vectorSearch({ user, embedding, k: 6, labels: ["Memory"] });
@@ -226,8 +251,17 @@ export function createMemory({ store, embedder, now = () => new Date(), onTouch 
           await store.addEdge({ user, from: id, to: target.id, type: "RELATES_TO" });
           touched.push(target.id);
         }
+        let followsLinked;
+        if (follows !== undefined) {
+          const predecessor = await store.getNode({ user, id: externalMemoryId(follows) });
+          followsLinked = Boolean(predecessor?.labels.includes("Memory"));
+          if (followsLinked) {
+            await store.addEdge({ user, from: predecessor.id, to: id, type: "NEXT_STEP" });
+            touched.push(predecessor.id);
+          }
+        }
         await touch(user, "remember", source, touched, at);
-        return { id };
+        return { id, replaced, ...(follows === undefined ? {} : { followsLinked }) };
       };
       const previous = writes.get(user) ?? Promise.resolve();
       const pending = previous.then(write, write);

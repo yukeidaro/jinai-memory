@@ -736,6 +736,41 @@ test("store edges upsert, preserve direction, sort missing weights as zero, and 
   assert.deepEqual(await store.neighbors({ user: "a", id: "two", types: [], limit: 10 }), []);
 });
 
+test("store removeEdges filters direction and types, updates both endpoints and isolates users", async (t) => {
+  const store = createMemoryStore();
+  t.after(() => store.close());
+  for (const user of ["a", "b"]) {
+    for (const id of ["one", "two", "three"]) {
+      await store.upsertNode({ user, id, labels: ["Memory"], props: { title: id } });
+    }
+    for (const [from, to, type] of [
+      ["one", "two", "ABOUT"], ["two", "one", "ABOUT"], ["one", "one", "ABOUT"],
+      ["one", "three", "MENTIONED_BY"], ["one", "three", "NEXT_STEP"], ["three", "two", "ABOUT"],
+    ]) {
+      await store.addEdge({ user, from, to, type });
+    }
+  }
+  const before = await store.listNodes({ user: "a" });
+  const otherEdges = await store.neighbors({ user: "b", id: "one", limit: 20 });
+  const remove = { user: "a", id: "one", types: ["ABOUT"], direction: "out" };
+  assert.equal(await store.removeEdges(remove), undefined);
+  await store.removeEdges(remove);
+  assert.deepEqual((await store.neighbors({ user: "a", id: "one", types: ["ABOUT"], limit: 20 }))
+    .map(({ edge }) => [edge.from, edge.to]), [["two", "one"]]);
+  assert.equal((await store.neighbors({ user: "a", id: "two", limit: 20 })).length, 2);
+  await store.removeEdges({ ...remove, types: ["ABOUT", "MENTIONED_BY"], direction: "both" });
+  assert.deepEqual((await store.neighbors({ user: "a", id: "one", limit: 20 }))
+    .map(({ edge }) => edge.type), ["NEXT_STEP"]);
+  assert.equal((await store.neighbors({ user: "a", id: "two", limit: 20 }))[0].edge.from, "three");
+  assert.deepEqual((await store.neighbors({ user: "a", id: "three", limit: 20 }))
+    .map(({ edge }) => edge.type).sort(), ["ABOUT", "NEXT_STEP"]);
+  for (const change of [{ types: [] }, { types: ["unknown"] }, { id: "missing" }, { user: "missing" }]) {
+    await store.removeEdges({ ...remove, ...change });
+  }
+  assert.deepEqual(await store.listNodes({ user: "a" }), before);
+  assert.deepEqual(await store.neighbors({ user: "b", id: "one", limit: 20 }), otherEdges);
+});
+
 test("store cosine search handles negative and zero vectors, label filters, and nodes without vectors", async (t) => {
   const store = createMemoryStore();
   t.after(() => store.close());
@@ -801,7 +836,15 @@ test("store rejects invalid dimensions, props, vectors, limits, and use after cl
   await assert.rejects(store.vectorSearch({ user: "a", embedding: [1, 0, 0], k: 1 }), /embedding/);
   await assert.rejects(store.listNodes({ user: "a", sinceIso: "bad" }), /ISO/);
   await assert.rejects(store.findNodes({ user: "a", limit: -1 }), /limit/);
+  const removal = { user: "a", id: "id", types: ["ABOUT"], direction: "out" };
+  for (const change of [
+    { id: "" }, { types: undefined }, { types: "ABOUT" }, { types: [""] }, { types: [1] },
+    { direction: undefined }, { direction: "in" }, { direction: null },
+  ]) {
+    await assert.rejects(store.removeEdges({ ...removal, ...change }), TypeError);
+  }
   await store.close();
   await store.close();
   await assert.rejects(store.getNode({ user: "a", id: "id" }), /closed/);
+  await assert.rejects(store.removeEdges(removal), /closed/);
 });

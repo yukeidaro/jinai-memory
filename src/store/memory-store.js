@@ -172,6 +172,21 @@ export function createMemoryStore() {
       return structuredClone(edge);
     },
 
+    async removeEdges({ user, id, types, direction }) {
+      string(id, "id");
+      labelsValue(types);
+      if (direction !== "out" && direction !== "both") {
+        throw new TypeError('direction must be "out" or "both"');
+      }
+      const data = graph(user);
+      for (const [key, edge] of data?.adjacent.get(id) ?? []) {
+        if (!types.includes(edge.type) || (direction === "out" && edge.from !== id)) continue;
+        data.edges.delete(key);
+        data.adjacent.get(edge.from)?.delete(key);
+        data.adjacent.get(edge.to)?.delete(key);
+      }
+    },
+
     async neighbors({ user, id, types, limit }) {
       string(id, "id");
       const count = limitValue(limit);
