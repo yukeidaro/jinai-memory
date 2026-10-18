@@ -53,12 +53,16 @@ jobs:
       - name: Render intro and closing stills
         run: npm run stills:final
 
+      - name: Make a 1.5x speed version (video and narration, pitch kept)
+        run: ffmpeg -y -i out/jinai-memory-final.mp4 -filter_complex "[0:v]setpts=PTS/1.5[v];[0:a]atempo=1.5[a]" -map "[v]" -map "[a]" -c:v libx264 -crf 18 -preset veryfast -c:a aac -b:a 192k -movflags +faststart out/jinai-memory-final-1.5x.mp4
+
       - name: Upload final video, two stills and timing information
         uses: actions/upload-artifact@v4
         with:
           name: jinai-memory-final-${{ github.run_number }}
           path: |
             video/out/jinai-memory-final.mp4
+            video/out/jinai-memory-final-1.5x.mp4
             video/out/stills-final/
             video/out/media-info-final.json
             video/public/final/durations.json
