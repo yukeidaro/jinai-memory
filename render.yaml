@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: jinai-memory
+    runtime: docker
+    plan: free
+    # FalkorDB Cloud is in GCP us-central1 (Iowa), so choose the nearest Render region: ohio.
+    # Region cannot change in place.
+    region: ohio
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: MEMORY_TOKEN
+        generateValue: true
+      # When set, MEMORY_USERS takes precedence over MEMORY_TOKEN and MEMORY_USER.
+      - key: MEMORY_USERS
+        sync: false
+      - key: FALKORDB_URL
+        sync: false
+      - key: EMBEDDINGS_PROVIDER
+        value: fake
+      - key: MEMORY_USER
+        value: demo
+      - key: OPENAI_API_KEY
+        sync: false

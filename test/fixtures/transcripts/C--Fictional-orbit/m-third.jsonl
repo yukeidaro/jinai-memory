@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-10-17T11:00:00Z","sessionId":"orbit-three","cwd":"C:\\Fictional\\orbit","gitBranch":"main","message":{"content":"Publish the fictional map release."}}
+{"type":"assistant","timestamp":"2026-10-17T11:01:00Z","message":{"content":[{"type":"tool_use","name":"NotebookEdit","input":{"file_path":"C:\\Fictional\\orbit\\demo.ipynb"}},{"type":"tool_use","name":"Bash","input":{"command":"gh pr view https://github.com/fictional-lab/orbit/pull/14"}}]}}

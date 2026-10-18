@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-10-16T10:00:00Z","sessionId":"orbit-two","cwd":"C:/Fictional/orbit","gitBranch":"feature/map","message":{"content":"Polish the orbit map labels."}}
+{"type":"assistant","timestamp":"2026-10-16T10:02:00Z","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"C:/Fictional/orbit/src/map.js"}},{"type":"tool_use","name":"Skill","input":{"skill":"map-review"}}]}}

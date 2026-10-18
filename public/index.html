@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="referrer" content="no-referrer">
+  <title>Jin AI | Memory constellation</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/": "https://cdn.jsdelivr.net/npm/three@0.160.0/",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+      "3d-force-graph": "https://cdn.jsdelivr.net/npm/3d-force-graph@1.73.2/dist/3d-force-graph.mjs",
+      "three-forcegraph": "https://cdn.jsdelivr.net/npm/three-forcegraph@1.41.13/dist/three-forcegraph.mjs",
+      "three-render-objects": "https://cdn.jsdelivr.net/npm/three-render-objects@1.29.3/dist/three-render-objects.mjs",
+      "accessor-fn": "https://cdn.jsdelivr.net/npm/accessor-fn@1.5.0/+esm",
+      "kapsule": "https://cdn.jsdelivr.net/npm/kapsule@1.14.5/+esm",
+      "d3-force-3d": "https://cdn.jsdelivr.net/npm/d3-force-3d@3.0.5/+esm",
+      "ngraph.graph": "https://cdn.jsdelivr.net/npm/ngraph.graph@20.0.1/+esm",
+      "ngraph.forcelayout": "https://cdn.jsdelivr.net/npm/ngraph.forcelayout@3.3.1/+esm",
+      "d3-array": "https://cdn.jsdelivr.net/npm/d3-array@3.2.4/+esm",
+      "data-joint": "https://cdn.jsdelivr.net/npm/data-joint@1.3.1/+esm",
+      "d3-scale": "https://cdn.jsdelivr.net/npm/d3-scale@4.0.2/+esm",
+      "d3-scale-chromatic": "https://cdn.jsdelivr.net/npm/d3-scale-chromatic@3.0.0/+esm",
+      "tinycolor2": "https://cdn.jsdelivr.net/npm/tinycolor2@1.6.0/+esm",
+      "polished": "https://cdn.jsdelivr.net/npm/polished@4.3.1/+esm",
+      "@tweenjs/tween.js": "https://cdn.jsdelivr.net/npm/@tweenjs/tween.js@23.1.1/+esm"
+    }
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#browse-toggle">Browse memories with the keyboard</a>
+  <main id="stage" aria-label="Interactive memory constellation">
+    <div id="graph" aria-label="3D graph. Drag to orbit, scroll to zoom. Use Browse memories for keyboard navigation.">
+      <div id="graph3d" class="graph-layer"></div>
+      <div id="graph2d" class="graph-layer" hidden></div>
+    </div>
+    <header class="topbar">
+      <div class="identity">
+        <div class="eyebrow"><span class="brand">Jin AI</span><span class="divider">/</span> MEMORY GRAPH</div>
+        <h1>Memory constellation<span class="title-dot">.</span></h1>
+        <p>One graph. Every AI. See what connects.</p>
+      </div>
+      <nav class="toolbar" aria-label="Graph controls">
+        <button id="view-toggle" type="button" aria-pressed="false" aria-controls="graph">2D view</button>
+        <button id="split-toggle" type="button" aria-pressed="false">Group by AI</button>
+        <button id="fit-view" type="button">Fit view</button>
+        <button id="browse-toggle" type="button" aria-expanded="false" aria-controls="browser">Browse memories</button>
+      </nav>
+    </header>
+
+    <div id="graph-message" class="graph-message" role="status">
+      <span class="loading-orbit" aria-hidden="true"></span>
+      <h2 id="message-title">Connecting the constellation</h2>
+      <p id="message-text">Loading the graph and its light.</p>
+    </div>
+    <noscript><div class="fatal-message">JavaScript and WebGL are required to explore this graph.</div></noscript>
+
+    <section class="legend glass" aria-labelledby="legend-title">
+      <div class="section-heading"><h2 id="legend-title">Written by</h2><button id="clear-filters" type="button" class="text-button">Show all</button></div>
+      <div class="source-filters" role="group" aria-label="Filter memory authors. Select multiple AI tools.">
+        <button type="button" data-source="claude" aria-pressed="false"><span class="source-dot" aria-hidden="true"></span>Claude<span class="source-count">0</span></button>
+        <button type="button" data-source="chatgpt" aria-pressed="false"><span class="source-dot" aria-hidden="true"></span>ChatGPT<span class="source-count">0</span></button>
+        <button type="button" data-source="cursor" aria-pressed="false"><span class="source-dot" aria-hidden="true"></span>Cursor<span class="source-count">0</span></button>
+        <button type="button" data-source="copilot" aria-pressed="false"><span class="source-dot" aria-hidden="true"></span>Copilot<span class="source-count">0</span></button>
+      </div>
+      <p id="filter-description" class="muted">All authors visible. Select to focus.</p>
+      <div class="shape-key"><span>● Memory</span><span>· Topic</span><span>◎ AI source</span></div>
+    </section>
+
+    <section id="browser" class="browser glass" aria-labelledby="browser-title" hidden>
+      <div class="section-heading"><h2 id="browser-title">Memories</h2><button id="browse-close" type="button" aria-label="Close memory browser">Close</button></div>
+      <label class="sr-only" for="memory-search">Search memory titles</label>
+      <input id="memory-search" type="search" placeholder="Find a memory..." autocomplete="off">
+      <ul id="memory-list" class="node-list"></ul>
+    </section>
+
+    <section class="activity" aria-labelledby="activity-title">
+      <h2 id="activity-title" class="eyebrow">LIVE ACTIVITY</h2>
+      <ol id="activity-list" aria-live="polite" aria-relevant="additions"></ol>
+    </section>
+
+    <footer class="statusbar">
+      <div><span id="connection-dot" class="connection-dot" aria-hidden="true"></span><span id="connection-status" role="status">Connecting</span><span id="graph-count" class="muted"></span></div>
+      <p class="interaction-hint">Drag to orbit <span>·</span> Scroll to zoom <span>·</span> Click to read</p>
+    </footer>
+    <p id="graph-error" class="error-notice" role="alert" hidden></p>
+    <p id="event-error" class="error-notice event-error" role="alert" hidden></p>
+    <p id="view-error" class="error-notice view-error" role="alert" hidden></p>
+
+    <aside id="details" class="details glass" aria-labelledby="detail-title" tabindex="-1" hidden>
+      <div class="section-heading"><span id="detail-type" class="eyebrow">MEMORY</span><button id="detail-close" type="button" aria-label="Close details (Escape)">Close <kbd>Esc</kbd></button></div>
+      <h2 id="detail-title"></h2>
+      <div class="detail-meta"><span id="detail-source" class="source-badge"></span><span id="detail-kind"></span><time id="detail-date"></time></div>
+      <p id="detail-summary" class="detail-summary"></p>
+      <article id="detail-body" class="markdown" aria-label="Memory content"></article>
+      <div id="detail-tags" class="tags" aria-label="Tags"></div>
+      <section class="connections" aria-labelledby="connections-title"><h3 id="connections-title">Connected memories</h3><ul id="connected-list" class="node-list"></ul></section>
+    </aside>
+  </main>
+  <script type="module">
+    import("./app.js").catch(() => {
+      document.getElementById("message-title").textContent = "The graph could not start";
+      document.getElementById("message-text").textContent = "Check your connection to jsDelivr, then reload this page.";
+      document.querySelector(".loading-orbit").hidden = true;
+      document.getElementById("connection-status").textContent = "Could not load modules";
+    });
+  </script>
+</body>
+</html>
