@@ -12,6 +12,8 @@
     "stills": "node render.mjs stills",
     "render:teaser": "node render-teaser.mjs render",
     "stills:teaser": "node render-teaser.mjs stills",
+    "render:final": "node render-final.mjs render",
+    "stills:final": "node render-final.mjs stills",
     "inspect": "node render.mjs inspect",
     "verify": "node verify.mjs"
   },

@@ -1,0 +1,66 @@
+name: Final video
+
+on:
+  push:
+    branches:
+      - video/final
+    paths:
+      - "video/**"
+      - ".github/workflows/final-video.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: video
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Ensure system ffmpeg and ffprobe are available
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -version
+          ffprobe -version
+
+      - name: Install pinned video dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Measure recordings with ffprobe (missing scenes use 4-second cards)
+        run: node measure-final.mjs
+
+      - name: Check final timeline and output guards
+        run: node --test src/final/timeline.test.mjs
+
+      - name: Render and validate JinAIMemoryFinal as a silent 1080p MP4
+        run: npm run render:final
+
+      - name: Render intro and closing stills
+        run: npm run stills:final
+
+      - name: Upload final video, two stills and timing information
+        uses: actions/upload-artifact@v4
+        with:
+          name: jinai-memory-final-${{ github.run_number }}
+          path: |
+            video/out/jinai-memory-final.mp4
+            video/out/stills-final/
+            video/out/media-info-final.json
+            video/public/final/durations.json
+          retention-days: 7
+          if-no-files-found: error
