@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { appendFile, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer as createHttpServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +12,9 @@ import {
   discoverTranscripts, parseOptions as transcriptOptions, planTranscripts, readTranscript,
 } from "../scripts/import-transcripts.mjs";
 import { createEmbedder } from "../src/embedder.js";
+import { createEventHub } from "../src/events.js";
 import { createMemory } from "../src/memory.js";
+import { createServer } from "../src/server.js";
 import { createMemoryStore } from "../src/store/memory-store.js";
 
 const HOME = fileURLToPath(new URL("./fixtures/import-home/", import.meta.url));
@@ -58,13 +60,14 @@ function cli(args, env = {}) {
   });
 }
 
-async function setup(t, { failTitles = [] } = {}) {
+async function setup(t, { failTitles = [], realServer = false } = {}) {
   const store = createMemoryStore();
   const memory = createMemory({ store, embedder: createEmbedder({ provider: "fake", dim: 16 }) });
   const calls = [];
   const external = new Map();
-  // The existing transcript importer requires the documented T16 response shape.
-  const server = createServer(async (req, res) => {
+  const server = realServer
+    ? createServer({ memory, store, hub: createEventHub(), token: TOKEN, user: "fictional" })
+    : createHttpServer(async (req, res) => {
     assert.equal(req.url, `/mcp/${encodeURIComponent(TOKEN)}-claude-code`);
     let body = "";
     for await (const chunk of req) body += chunk;
@@ -94,7 +97,7 @@ async function setup(t, { failTitles = [] } = {}) {
     await store.close();
   });
   return {
-    calls, store,
+    calls, store, memory,
     env: { JINAI_MEMORY_URL: `http://127.0.0.1:${server.address().port}`, JINAI_MEMORY_TOKEN: TOKEN },
     memories: () => store.listNodes({ user: "fictional", label: "Memory" }),
   };
@@ -168,6 +171,58 @@ test("--yes sends both categories to a local T16-compatible server and reuses bo
   summary(changed.stdout, [2, 5, 2, 5, 1]);
   assert.match(changed.stdout, /success=2, failed=0, skipped=13/u);
   assert.equal(calls.length, 16);
+});
+
+test("combined --yes imports three sessions through createServer and replaces safely after state loss", async (t) => {
+  const home = await temporary(t);
+  const { env, memories, store, memory } = await setup(t, { realServer: true });
+  const remember = memory.remember;
+  const saved = [];
+  t.mock.method(memory, "remember", async (args) => {
+    const reply = await remember(args);
+    saved.push(reply);
+    return reply;
+  });
+  const args = ["--home", home, "--root", path.join(ROOT, "C--Fictional-orbit"), "--yes", "--verbose"];
+  const first = await cli(args, env);
+  assert.equal(first.code, 0, first.stderr);
+  assert.match(first.stdout, /success=3, failed=0, skipped=0/u);
+  summary(first.stdout, [0, 0, 0, 3, 1]);
+  assert.equal(Object.hasOwn(saved[0], "followsLinked"), false);
+  assert.deepEqual(saved.map(({ replaced }) => replaced), [false, false, false]);
+  const original = await memories();
+  assert.equal(original.length, 3);
+  const nextSteps = async () => {
+    const edges = [];
+    for (const node of await memories()) {
+      for (const { edge } of await store.neighbors({ user: "fictional", id: node.id, types: ["NEXT_STEP"] })) {
+        if (edge.from === node.id) edges.push([edge.from, edge.to]);
+      }
+    }
+    return edges.sort();
+  };
+  const ids = new Map(original.map((node) => [node.props.externalId, node.id]));
+  const expectedEdges = [
+    [ids.get("cc-session:orbit-one"), ids.get("cc-session:orbit-two")],
+    [ids.get("cc-session:orbit-two"), ids.get("cc-session:orbit-three")],
+  ].sort();
+  assert.deepEqual(await nextSteps(), expectedEdges);
+  const again = await cli(args, env);
+  assert.equal(again.code, 0, again.stderr);
+  assert.match(again.stdout, /success=0, failed=0, skipped=3/u);
+  assert.equal(again.stdout.match(/unchanged/gu)?.length, 3);
+  assert.equal(saved.length, 3);
+  const state = path.join(home, ".jinai-memory", "transcript-state.json");
+  await rm(state);
+  const replay = await cli(args, env);
+  assert.equal(replay.code, 0, replay.stderr);
+  assert.match(replay.stdout, /success=3, failed=0, skipped=0/u);
+  assert.equal(saved.length, 6);
+  assert.ok(saved.slice(3).every((reply) => reply.replaced === true));
+  assert.equal((await memories()).length, 3);
+  assert.deepEqual((await memories()).map((node) => node.id).sort(), original.map((node) => node.id).sort());
+  assert.deepEqual(await nextSteps(), expectedEdges);
+  assert.equal(Object.keys(JSON.parse(await readFile(state, "utf8")).entries).length, 3);
 });
 
 test("combined filters apply to sessions, repeated includes become instruction sections, and --server wins", async (t) => {

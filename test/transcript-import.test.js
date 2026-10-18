@@ -208,6 +208,59 @@ test("--yes imports into a fictional T16-compatible memory-store server, replace
   assert.ok(!calls.some((call) => JSON.stringify(call).includes("fictional-value")));
 });
 
+test("--yes imports three sessions through createServer, skips unchanged and replaces after state loss", async (t) => {
+  const { env, memories, store } = await setup(t, true);
+  const directory = await temporary(t);
+  const state = path.join(directory, "state.json");
+  const args = ["--root", path.join(ROOT, "C--Fictional-orbit"), "--state", state, "--yes"];
+  const requests = [];
+  const saved = [];
+  const output = [];
+  const dependencies = {
+    env, log: (line) => output.push(line),
+    fetchImpl: async (url, settings) => {
+      requests.push(JSON.parse(settings.body).params.arguments);
+      const response = await fetch(url, settings);
+      const reply = await response.clone().json();
+      saved.push(JSON.parse(reply.result.content[0].text));
+      return response;
+    },
+  };
+  assert.deepEqual(await main(args, dependencies), { success: 3, failed: 0, replaced: 0, skipped: 0 });
+  assert.deepEqual(requests.map(({ follows }) => follows),
+    [undefined, "cc-session:orbit-one", "cc-session:orbit-two"]);
+  assert.equal(Object.hasOwn(saved[0], "followsLinked"), false);
+  assert.deepEqual(saved.slice(1).map(({ followsLinked }) => followsLinked), [true, true]);
+  const original = await memories();
+  assert.equal(original.length, 3);
+  const nextSteps = async () => {
+    const edges = [];
+    for (const node of await memories()) {
+      for (const { edge } of await store.neighbors({ user: "fictional", id: node.id, types: ["NEXT_STEP"] })) {
+        if (edge.from === node.id) edges.push([edge.from, edge.to]);
+      }
+    }
+    return edges.sort();
+  };
+  const ids = new Map(original.map((node) => [node.props.externalId, node.id]));
+  const expectedEdges = [
+    [ids.get("cc-session:orbit-one"), ids.get("cc-session:orbit-two")],
+    [ids.get("cc-session:orbit-two"), ids.get("cc-session:orbit-three")],
+  ].sort();
+  assert.deepEqual(await nextSteps(), expectedEdges);
+  output.length = 0;
+  assert.deepEqual(await main(args, dependencies), { success: 0, failed: 0, replaced: 0, skipped: 3 });
+  assert.match(output.join("\n"), /unchanged=3/u);
+  assert.equal(requests.length, 3);
+  await rm(state);
+  assert.deepEqual(await main(args, dependencies), { success: 3, failed: 0, replaced: 3, skipped: 0 });
+  assert.ok(saved.slice(3).every((reply) => reply.replaced === true));
+  assert.equal((await memories()).length, 3);
+  assert.deepEqual((await memories()).map((node) => node.id).sort(), original.map((node) => node.id).sort());
+  assert.deepEqual(await nextSteps(), expectedEdges);
+  assert.equal(Object.keys(parseTranscriptState(await readFile(state, "utf8"))).length, 3);
+});
+
 test("--no-external-id works against the current createServer and real memory layer without changing the server", async (t) => {
   const { base, env, memories } = await setup(t, true);
   const directory = await temporary(t);
@@ -302,17 +355,25 @@ test("HTTP, JSON-RPC, tool and link errors stay private and never update success
       projectKey: entry.transcript.projectKey, occurredAt: entry.transcript.occurredAt, externalIds: true,
     },
   };
-  const unlinked = await sendTranscripts([orbitTwo], {
-    state: predecessorState, persist: () => assert.fail("Unconfirmed links must not update state"),
-    log: (line) => output.push(line),
-    fetchImpl: async (url, settings) => Response.json({
-      jsonrpc: "2.0", id: JSON.parse(settings.body).id, result: { content: [{
-        type: "text", text: '{"id":"fictional","replaced":false,"followsLinked":false}',
-      }] },
-    }),
-  });
-  assert.equal(unlinked.failed, 1);
-  assert.ok(!Object.hasOwn(predecessorState, "orbit-two"));
+  for (const followsLinked of [undefined, null, "true", false]) {
+    const unlinked = await sendTranscripts([orbitTwo], {
+      state: predecessorState, persist: () => assert.fail("Unconfirmed links must not update state"),
+      log: (line) => output.push(line),
+      fetchImpl: async (url, settings) => {
+        const request = JSON.parse(settings.body);
+        assert.equal(request.params.arguments.follows, "cc-session:orbit-one");
+        return Response.json({
+          jsonrpc: "2.0", id: request.id, result: { content: [{
+            type: "text", text: JSON.stringify({ id: "fictional", replaced: false, followsLinked }),
+          }] },
+        });
+      },
+    });
+    assert.deepEqual(unlinked, { success: 0, failed: 1, replaced: 0, skipped: 0 });
+    assert.ok(!Object.hasOwn(predecessorState, "orbit-two"));
+    assert.match(output.at(-1), followsLinked === false
+      ? /NEXT_STEP link was not confirmed/u : /unsupported remember result/u);
+  }
   assert.match(output.join("\n"), /NEXT_STEP link was not confirmed/u);
   const unsafe = structuredClone(entry);
   unsafe.transcript.memory.title = "password: fictional-not-sent";
