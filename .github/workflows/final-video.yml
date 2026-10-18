@@ -56,6 +56,17 @@ jobs:
       - name: Make a 1.5x speed version (video and narration, pitch kept)
         run: ffmpeg -y -i out/jinai-memory-final.mp4 -filter_complex "[0:v]setpts=PTS/1.5[v];[0:a]atempo=1.5[a]" -map "[v]" -map "[a]" -c:v libx264 -crf 18 -preset veryfast -c:a aac -b:a 192k -movflags +faststart out/jinai-memory-final-1.5x.mp4
 
+      - name: Add sound effects to the 1.5x version (whooshes at scene cuts, chimes when memory is saved and recalled)
+        run: |
+          W="anoisesrc=d=0.6:c=pink:a=0.6,highpass=f=300,lowpass=f=5000,afade=t=in:d=0.25,afade=t=out:st=0.25:d=0.35,volume=0.5"
+          C="sine=f=1046:d=0.7,afade=t=out:st=0.02:d=0.68,volume=0.35"
+          D="sine=f=1568:d=0.7,afade=t=out:st=0.02:d=0.68,volume=0.25"
+          ffmpeg -y -i out/jinai-memory-final-1.5x.mp4 -filter_complex "\
+          ${W},adelay=4700|4700[w1];${W},adelay=17700|17700[w2];${W},adelay=25400|25400[w3];${W},adelay=41400|41400[w4];${W},adelay=50200|50200[w5];\
+          ${C},adelay=38500|38500[c1];${D},adelay=38650|38650[c2];${C},adelay=48500|48500[c3];${D},adelay=48650|48650[c4];\
+          [0:a][w1][w2][w3][w4][w5][c1][c2][c3][c4]amix=inputs=10:duration=first:normalize=0[a]" \
+          -map 0:v -map "[a]" -c:v copy -c:a aac -b:a 192k -movflags +faststart out/jinai-memory-final-1.5x-sfx.mp4
+
       - name: Upload final video, two stills and timing information
         uses: actions/upload-artifact@v4
         with:
@@ -63,6 +74,7 @@ jobs:
           path: |
             video/out/jinai-memory-final.mp4
             video/out/jinai-memory-final-1.5x.mp4
+            video/out/jinai-memory-final-1.5x-sfx.mp4
             video/out/stills-final/
             video/out/media-info-final.json
             video/public/final/durations.json
