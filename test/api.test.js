@@ -128,8 +128,15 @@ test("seed --dry-run prints ten fictional payloads, all sources, tags, and yeste
   assert.ok(notes.every((note) => note.arguments.tags.length >= 3 && note.arguments.tags.length <= 5));
   assert.ok(notes.every((note) => !/[\r\n]/u.test(note.arguments.summary)));
   assert.equal(notes.filter((note) => note.source !== "chatgpt").length, 8);
-  const event = notes.find((note) => note.arguments.title === "夕飯にハンバーグを食べた");
+  assert.doesNotMatch(JSON.stringify(notes), /[^\x00-\x7F]/u);
+  const preference = notes.find((note) => note.arguments.title === "Loves burgers");
+  assert.equal(preference.source, "chatgpt");
+  assert.equal(preference.arguments.kind, "preference");
+  assert.ok(preference.arguments.tags.includes("burgers"));
+  const event = notes.find((note) => note.arguments.title === "Dinner: burgers");
   assert.equal(event.source, "chatgpt");
+  assert.equal(event.arguments.kind, "event");
+  assert.deepEqual(event.arguments.relatesTo, ["Loves burgers"]);
   const noon = new Date(event.arguments.occurredAt);
   assert.equal(noon.getHours(), 12);
   assert.equal(noon.getMinutes(), 0);
@@ -141,10 +148,11 @@ test("seed --dry-run prints ten fictional payloads, all sources, tags, and yeste
     return date.toISOString();
   });
   assert.ok(expected.includes(event.arguments.occurredAt));
-  assert.match(event.arguments.text, /## 材料[\s\S]*## 作り方/u);
-  assert.equal(notes.some((note) => note.arguments.title.includes("焼き魚")), false);
-  assert.ok(notes.some((note) => note.source === "cursor" && note.arguments.title === "献立アプリの設計メモ"));
-  assert.ok(notes.some((note) => note.source === "copilot" && note.arguments.title === "買い物リストのスクリプト"));
+  assert.match(event.arguments.text, /## Ingredients[\s\S]*## Method/u);
+  const titles = new Set(notes.map((note) => note.arguments.title));
+  assert.ok(notes.every((note) => (note.arguments.relatesTo ?? []).every((title) => titles.has(title))));
+  assert.ok(notes.some((note) => note.source === "cursor" && note.arguments.title === "Meal planner design notes"));
+  assert.ok(notes.some((note) => note.source === "copilot" && note.arguments.title === "Shopping list script"));
 });
 
 async function runSeed(t, base, token) {
@@ -172,9 +180,9 @@ test("seed writes through real MCP HTTP into the graph with all four tool source
     [source, memories.filter((node) => node.source === source).length]));
   assert.deepEqual(counts, { chatgpt: 2, claude: 4, cursor: 2, copilot: 2 });
   assert.ok(memories.every((node) => node.tags.length >= 3 && node.tags.length <= 5));
-  const event = memories.find((node) => node.label === "夕飯にハンバーグを食べた");
+  const event = memories.find((node) => node.label === "Dinner: burgers");
   assert.equal(event.kind, "event");
-  assert.match(event.text, /## 材料[\s\S]*## 作り方/u);
+  assert.match(event.text, /## Ingredients[\s\S]*## Method/u);
   assert.equal(new Set(snapshot.nodes.filter((node) => node.type === "source").map((node) => node.label)).size, 4);
 });
 

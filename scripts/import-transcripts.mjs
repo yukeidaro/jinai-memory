@@ -14,7 +14,7 @@ const HELP = `Usage: node scripts\\import-transcripts.mjs [options]
 
 Default: metadata-only dry run; no network requests or state writes.
   --root <directory>        Default: ~/.claude/projects
-  --exclude-project <name>  Repeatable; scratch-workspaces is always excluded
+  --exclude-project <name>  Repeatable; scratch-workspaces and dated scratch cwd names are always excluded
   --since YYYY-MM-DD        Include sessions starting on/after this UTC date
   --limit <N>               At most N sessions, oldest first
   --session <sessionId>     Select one session
@@ -142,7 +142,7 @@ export function parseTranscriptState(text) {
   return state.entries;
 }
 
-async function loadState(filename) {
+export async function loadState(filename) {
   try {
     return parseTranscriptState(await readFile(filename, "utf8"));
   } catch (error) {
@@ -152,7 +152,7 @@ async function loadState(filename) {
   }
 }
 
-async function saveState(filename, entries) {
+export async function saveState(filename, entries) {
   await mkdir(path.dirname(filename), { recursive: true, mode: 0o700 });
   const temporary = `${filename}.${randomUUID()}.tmp`;
   try {
@@ -202,6 +202,7 @@ function updateHistory(history, transcript) {
 export function planTranscripts(entries, options, state = {}) {
   const selected = entries.filter(({ transcript }) => !transcript || (
     !options.exclude.some((name) => transcript.project.toLowerCase().includes(name)) &&
+    !/^scratch-\d{4}-\d{2}-\d{2}-[a-z0-9]{6}$/iu.test(transcript.project) &&
     (!options.session || transcript.sessionId === options.session) &&
     (!options.since || transcript.occurredAt >= `${options.since}T00:00:00.000Z`)
   )).filter(({ transcript }) => transcript || !options.session && !options.since)

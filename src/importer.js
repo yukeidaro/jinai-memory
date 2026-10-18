@@ -296,13 +296,13 @@ export function planImport(files, { home, state = {} }) {
       occurrences.set(heading, occurrence + 1);
       const key = JSON.stringify([relative, heading, occurrence]);
       return {
-        key, raw, note, projectTags: file.type === "memory",
+        key, raw, note, type: file.type, projectTags: file.type === "memory",
         from: outside ? filename.replaceAll("\\", "/") : `~/${relative}`,
       };
     });
   });
   const { names, tags } = importTopics(notes.map(({ note }) => note), types);
-  return notes.map(({ key, raw, from, projectTags, note: original }, index) => {
+  return notes.map(({ key, raw, from, type, projectTags, note: original }, index) => {
     const base = original.tags.filter((tag) => !projectTags || names.has(tag.toLowerCase()))
       .map((tag) => names.get(tag.toLowerCase()) ?? tag);
     const note = { ...original, tags: importTags(base, tags[index], types) };
@@ -315,7 +315,7 @@ export function planImport(files, { home, state = {} }) {
       : note.text;
     const change = state[key] === hash ? "unchanged" : Object.hasOwn(state, key) ? "changed" : "new";
     return {
-      key, hash, secret: secret?.kind, truncated, change,
+      key, hash, type, secret: secret?.kind, truncated, change,
       status: secret ? "secret-skip" : change === "unchanged" ? change : truncated ? "truncated" : change,
       from, chars: Array.from(text).length, memory: { ...note, text },
     };

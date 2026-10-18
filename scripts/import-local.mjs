@@ -56,7 +56,7 @@ export function parseOptions(args, home) {
   };
 }
 
-async function loadState(filename) {
+export async function loadState(filename) {
   let text;
   try {
     text = await readFile(filename, "utf8");
@@ -67,7 +67,7 @@ async function loadState(filename) {
   return parseImportState(text);
 }
 
-async function saveState(filename, entries) {
+export async function saveState(filename, entries) {
   await mkdir(path.dirname(filename), { recursive: true, mode: 0o700 });
   const temporary = `${filename}.${randomUUID()}.tmp`;
   try {

@@ -2,6 +2,10 @@
 
 One memory graph for every AI you use — and you can see what it uses.
 
+**Bring the AI memory you already have** — one command imports Claude Code skills, memory files, CLAUDE.md and past sessions.<br>
+**Every AI shares it** — ChatGPT, Claude and any MCP client read and write the same graph.<br>
+**You can see it** — a 2D/3D view lights up what each AI used; FalkorDB stores and links it.
+
 Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs x FalkorDB).
 Primary track: **Agent Memory and Coordination**.
 
@@ -15,16 +19,17 @@ Claude needs the same introduction tomorrow.
 
 Jin AI Memory exposes one user's graph over MCP to Claude, ChatGPT, Cursor, and
 Copilot. It stores Markdown notes as **preferences, dated events, facts, or
-decisions**. A 3D browser view colors notes by their writing AI, shows their
+decisions**. A 2D/3D browser view colors notes by their writing AI, shows their
 connections, and highlights nodes reported by memory operations. This is a
 record of server-side memory access, not proof that a model used a note in its answer.
 
-**Dinner example:** tell ChatGPT, "I like hamburger steak. Help me make a recipe,"
+**Dinner example:** tell ChatGPT, "I love burgers. Help me make a recipe,"
 then save the meal as a dated event. The next day, ask Claude, "What should I have
 for dinner?" It can open the shared dinner topic and see yesterday's meal.
 Fallback `recall` separates preferences from `recent_events`, with `days_ago`.
 The AI decides whether to avoid repeating dinner; the server does not exclude it.
-The seed script supplies fictional Japanese notes for this story.
+The seed script supplies fictional English notes: ChatGPT's "Loves burgers"
+preference and yesterday's "Dinner: burgers" event, dated at local noon.
 
 ## How FalkorDB is the core
 
@@ -186,6 +191,7 @@ Start-Process "http://localhost:8787/?token=$encodedToken"
 Expect HTTP **200** and
 `Seeded 10 demo memories (chatgpt=2, claude=4, cursor=2, copilot=2).`
 Click a node to read its Markdown; use **Group by AI** or the author filters.
+Switch to 2D with `?view=2d` (or append `&view=2d` to a URL that already has a token).
 Seeding again appends another ten notes.
 
 For a visual-only preview, open `http://localhost:8787/?mock=1`. It uses built-in
@@ -233,6 +239,56 @@ The server does not automatically load `.env`. For file-based configuration use
 the placeholders in [`.env.example`](.env.example) and
 `node --env-file=.env .\src\server.js`, keeping real values out of Git.
 
+### 4. Bring your existing AI memory in one command
+
+Preview both Claude Code files and past sessions locally:
+
+```powershell
+node .\scripts\import.mjs
+# Safe, fictional examples:
+node .\scripts\import.mjs --home .\test\fixtures\import-home --root .\test\fixtures\transcripts
+```
+
+The default is a **dry run**: no network requests or state writes. The final
+five rows count `skills`, `memory files`, `CLAUDE.md sections`, `Claude Code
+sessions`, and `secrets skipped`. Skills include Copilot skills, as in the
+individual file importer. Non-secret new, changed and unchanged entries count;
+`✓` means the category was counted without a send failure, **not** that a dry
+run uploaded it. A failed send marks its category `✗` with a failure count and
+sets a nonzero exit code. `secrets skipped` counts rejected file/section entries
+plus individual secret-bearing items dropped from selected sessions, not just
+whole sessions. Secret detection is heuristic; review confidentiality too.
+
+Use `--verbose` to review metadata tables (titles, paths and status, never note
+bodies or summaries). Only after review, choose **your own trusted server**
+and explicitly enable sending:
+
+```powershell
+$env:JINAI_MEMORY_URL = "http://localhost:8787"
+# For the local server you started yourself above:
+$env:JINAI_MEMORY_TOKEN = $env:MEMORY_TOKEN
+node .\scripts\import.mjs --yes
+```
+
+There is **no token argument**. `--server` overrides `JINAI_MEMORY_URL`.
+`--home` selects the home for both file discovery and the default session tree
+(`<home>/.claude/projects`), and for both existing state files under
+`<home>/.jinai-memory`. Keep real state and personal data outside this repository.
+Repeat `--include <file.md>` to add instruction sections (counted with
+`CLAUDE.md sections`). `--root`, repeatable `--exclude-project`,
+`--since YYYY-MM-DD` (UTC) and `--limit N` (oldest first) apply only to sessions.
+Scratch workspaces are always excluded, including cwd basenames matching
+`scratch-YYYY-MM-DD-xxxxxx` (six letters or digits).
+
+Files are sent first, then sessions, using the same secret checks, successful-only
+state and unchanged-entry skipping as the individual commands below. Changed
+file sections append new memories; changed sessions require a server supporting
+the existing **T16 `externalId`/`follows` response** for replacement and
+`NEXT_STEP` links. The combined command does not enable legacy transcript mode
+or add that support to a server. For independent control, use
+[the file importer](#import-your-own-claude-code-memory-individual-command) or
+[the session importer](#import-your-claude-code-sessions-individual-command).
+
 ## Connect your AI
 
 For cloud-hosted connectors, first deploy to a reachable HTTPS host; they cannot
@@ -267,7 +323,7 @@ and meal from ChatGPT, then ask Claude to open the dinner topic before answering
 The map is rebuilt on each `tools/list`; call `orient` explicitly if the client
 caches an older tool description. Responses depend on the model and its tool use.
 
-## Import your own Claude Code memory
+## Import your own Claude Code memory (individual command)
 
 Run the dependency-free importer locally with Node.js 24. **Never add personal
 files, import state, tokens, or imported content to this repository.** The
@@ -341,7 +397,7 @@ anything to this repository or other AI tools. The server's configured embedding
 provider still applies (OpenAI embeddings send note data to OpenAI; `fake` does
 not).
 
-## Import your Claude Code sessions
+## Import your Claude Code sessions (individual command)
 
 This separate, dependency-free importer reads `~/.claude/projects/**/*.jsonl`
 **locally, one line at a time**. Each session becomes one short dated event:
@@ -387,6 +443,9 @@ Never commit personal transcripts, extracted notes, tokens or state to this
 repository; all checked-in transcript fixtures are fictional.
 
 Project directories containing `scratch-workspaces` are always excluded.
+Sessions whose cwd basename matches `scratch-YYYY-MM-DD-xxxxxx` (six letters
+or digits) are also always excluded, even when their transcript folder has a
+different name.
 Repeat `--exclude-project <name>` to exclude more project/folder names (matching
 is case-insensitive). `--root <directory>` selects another transcript tree,
 `--since YYYY-MM-DD` selects sessions starting on/after that UTC date,
@@ -446,8 +505,9 @@ Japanese, including relative-day labels.
 node --test
 ```
 
-Without `FALKORDB_URL`, **119 pass and 1 real-FalkorDB integration test is
-skipped** (120 reported tests). Coverage includes cross-client dinner recall,
+Without `FALKORDB_URL`, the real-FalkorDB integration test is skipped.
+Coverage includes the combined dry run and import, scratch-session exclusions,
+English burger demo data, cross-client dinner recall,
 per-user isolation, vector/index query generation, SSE, and the 2,000-note
 response-budget check. Real-database integration is opt-in via `FALKORDB_URL`;
 use a disposable test database, never production credentials. It creates random
