@@ -36,7 +36,10 @@
 <body>
   <a class="skip-link" href="#browse-toggle">Browse memories with the keyboard</a>
   <main id="stage" aria-label="Interactive memory constellation">
-    <div id="graph" aria-label="3D graph. Drag to orbit, scroll to zoom. Use Browse memories for keyboard navigation."></div>
+    <div id="graph" aria-label="3D graph. Drag to orbit, scroll to zoom. Use Browse memories for keyboard navigation.">
+      <div id="graph3d" class="graph-layer"></div>
+      <div id="graph2d" class="graph-layer" hidden></div>
+    </div>
     <header class="topbar">
       <div class="identity">
         <div class="eyebrow"><span class="brand">Jin AI</span><span class="divider">/</span> MEMORY GRAPH</div>
@@ -44,6 +47,7 @@
         <p>One graph. Every AI. See what connects.</p>
       </div>
       <nav class="toolbar" aria-label="Graph controls">
+        <button id="view-toggle" type="button" aria-pressed="false" aria-controls="graph">2D view</button>
         <button id="split-toggle" type="button" aria-pressed="false">Group by AI</button>
         <button id="fit-view" type="button">Fit view</button>
         <button id="browse-toggle" type="button" aria-expanded="false" aria-controls="browser">Browse memories</button>
@@ -87,6 +91,7 @@
     </footer>
     <p id="graph-error" class="error-notice" role="alert" hidden></p>
     <p id="event-error" class="error-notice event-error" role="alert" hidden></p>
+    <p id="view-error" class="error-notice view-error" role="alert" hidden></p>
 
     <aside id="details" class="details glass" aria-labelledby="detail-title" tabindex="-1" hidden>
       <div class="section-heading"><span id="detail-type" class="eyebrow">MEMORY</span><button id="detail-close" type="button" aria-label="Close details (Escape)">Close <kbd>Esc</kbd></button></div>

@@ -38,6 +38,7 @@ a { color: #9bd5ff; }
 .skip-link { position: fixed; top: -80px; left: 20px; z-index: 20; padding: 12px; background: var(--surface); }
 .skip-link:focus { top: 12px; }
 #stage, #graph { position: absolute; inset: 0; }
+.graph-layer { position: absolute; inset: 0; }
 #graph canvas { display: block; }
 .topbar { position: absolute; top: 28px; left: 32px; right: 32px; display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; pointer-events: none; }
 .identity { text-shadow: 0 2px 12px #05060a; }
@@ -50,6 +51,7 @@ h1 { margin: 13px 0 8px; font-size: clamp(22px, 3vw, 34px); letter-spacing: -.04
 .toolbar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; pointer-events: auto; }
 .toolbar button { background: #10141ef2; font-size: 12px; }
 .toolbar button[aria-pressed="true"] { background: #263347; }
+.toolbar button:disabled { cursor: wait; opacity: .65; }
 .glass { background: #10141ef5; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 20px 80px #0006; }
 .legend { position: absolute; left: 32px; bottom: 72px; width: 286px; padding: 17px; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -87,6 +89,7 @@ h1 { margin: 13px 0 8px; font-size: clamp(22px, 3vw, 34px); letter-spacing: -.04
 .fatal-message { position: absolute; top: 45%; left: 10%; right: 10%; text-align: center; background: var(--surface); padding: 25px; }
 .error-notice { position: absolute; left: 32px; bottom: 318px; max-width: min(420px, 90vw); padding: 12px 15px; margin: 0; border: 1px solid #985a55; border-radius: 8px; color: #ffd4ce; background: #291816; font-size: 12px; line-height: 1.6; }
 .event-error { bottom: 380px; }
+.view-error { bottom: 442px; }
 .browser { position: absolute; left: 32px; top: 150px; bottom: 305px; width: 330px; padding: 16px; display: flex; flex-direction: column; z-index: 2; }
 .browser .section-heading button, .details .section-heading button { font-size: 11px; min-height: 34px; }
 .browser input { width: 100%; margin: 14px 0 8px; border: 1px solid #53627b; background: #090e17; color: var(--text); padding: 11px; border-radius: 7px; }
@@ -135,6 +138,7 @@ kbd { color: #b7c5d8; font: inherit; margin-left: 5px; }
   .details { top: 172px; right: 20px; bottom: 66px; width: min(408px, calc(100vw - 40px)); }
   .error-notice { left: 20px; bottom: 304px; }
   .event-error { bottom: 369px; }
+  .view-error { bottom: 434px; }
 }
 @media (max-height: 600px) and (min-width: 801px) {
   .identity p, .activity h2 { display: none; }
