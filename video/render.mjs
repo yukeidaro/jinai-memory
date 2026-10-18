@@ -85,6 +85,9 @@ export async function loadClips(directory, probeFile = probe, warn = console.war
     const sourceFrames = Math.ceil((timing.tailSeconds + 0.35) * FPS);
     if (end < sourceFrames) throw new Error(`${file} is shorter than its recorded actions.`);
     const sceneFrames = SCENES.find((scene) => scene.id === id).seconds * FPS;
+    if (sourceFrames > sceneFrames) {
+      throw new Error(`${file} exceeds its scene duration; refusing to speed up the UI or shorten its reading/group holds.`);
+    }
     clips[id] = {
       file, trimBefore: end - sourceFrames, sourceFrames,
       playbackRate: sourceFrames / sceneFrames,
@@ -104,7 +107,7 @@ export function validateOutput(metadata) {
     !Number.isFinite(seconds) || Math.abs(seconds - DURATION / FPS) > 1 / FPS ||
     metadata.streams.some((item) => item.codec_type === "audio")
   ) {
-    throw new Error("Output must be 150 seconds, 1920x1080, 30fps, with no audio stream.");
+    throw new Error(`Output must be ${DURATION / FPS} seconds, 1920x1080, 30fps, with no audio stream.`);
   }
   return { seconds, width: stream.width, height: stream.height, fps, audioStreams: 0 };
 }

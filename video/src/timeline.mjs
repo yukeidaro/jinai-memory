@@ -5,15 +5,15 @@ export const HEIGHT = 1080;
 export const SCENES = [
   { id: "intro", start: 0, seconds: 10, still: 5 },
   { id: "chatgpt", start: 10, seconds: 25, still: 28 },
-  { id: "write", start: 35, seconds: 15, still: 39 },
-  { id: "claude", start: 50, seconds: 30, still: 71 },
-  { id: "read", start: 80, seconds: 15, still: 84 },
-  { id: "group", start: 95, seconds: 15, still: 100 },
-  { id: "falkordb", start: 110, seconds: 30, still: 125 },
-  { id: "outro", start: 140, seconds: 10, still: 145 },
+  { id: "write", start: 35, seconds: 20, still: 42 },
+  { id: "claude", start: 55, seconds: 30, still: 76 },
+  { id: "read", start: 85, seconds: 20, still: 100 },
+  { id: "group", start: 105, seconds: 25, still: 123 },
+  { id: "falkordb", start: 130, seconds: 30, still: 145 },
+  { id: "outro", start: 160, seconds: 10, still: 165 },
 ];
 
-export const DURATION = 150 * FPS;
+export const DURATION = 170 * FPS;
 export const CLIP_FILES = {
   write: "ui-write.webm",
   read: "ui-read.webm",

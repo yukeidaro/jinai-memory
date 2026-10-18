@@ -39,21 +39,21 @@ export function Eyebrow({ children, color = COLORS.teal, style }) {
   );
 }
 
-function Caption({ lines, duration }) {
+function Caption({ lines, duration, graph }) {
   const frame = useCurrentFrame();
   return (
     <div
       style={{
         position: "absolute",
-        bottom: 52,
-        left: 70,
-        right: 70,
-        padding: "20px 30px",
+        bottom: graph ? 40 : 52,
+        left: graph ? 350 : 70,
+        right: graph ? 460 : 70,
+        padding: graph ? "12px 18px" : "20px 30px",
         backgroundColor: "rgba(0, 0, 0, 0.94)",
         borderTop: `1px solid ${COLORS.teal}55`,
         opacity: fade(frame, duration),
         textAlign: "center",
-        fontSize: 35,
+        fontSize: graph ? 28 : 35,
         lineHeight: 1.35,
         fontWeight: 500,
       }}
@@ -63,10 +63,10 @@ function Caption({ lines, duration }) {
   );
 }
 
-export function Captions({ items }) {
+export function Captions({ items, graph = false }) {
   return items.map(({ from, seconds, lines }) => (
     <Sequence key={from} from={from * FPS} durationInFrames={seconds * FPS}>
-      <Caption lines={lines} duration={seconds * FPS} />
+      <Caption lines={lines} duration={seconds * FPS} graph={graph} />
     </Sequence>
   ));
 }

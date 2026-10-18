@@ -9,7 +9,22 @@ const videoDir = fileURLToPath(new URL("../", import.meta.url));
 const publicDir = path.join(videoDir, "public");
 const manifestPath = path.join(publicDir, "ui-timing.json");
 const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+// At DPR 1, three -360 wheel events give ~1.74x zoom after Fit view, targeting 60-75% graph width.
+const ZOOM_WHEEL_STEPS = 3;
+const ZOOM_WHEEL_DELTA = -360;
 let stage = "configuration";
+
+async function fitAndZoom(page) {
+  await page.locator("#fit-view").click();
+  await pause(1_500);
+  await page.mouse.move(WIDTH / 2, HEIGHT / 2);
+  for (let step = 0; step < ZOOM_WHEEL_STEPS; step++) {
+    await page.mouse.wheel(0, ZOOM_WHEEL_DELTA);
+    await pause(250);
+  }
+  await page.mouse.move(WIDTH / 2, 100);
+  await pause(1_000);
+}
 
 async function main() {
   const config = captureConfig(process.env);
@@ -67,6 +82,8 @@ async function main() {
           /[1-9]\d* memories/.test(document.querySelector("#graph-count")?.textContent ?? ""),
         );
         await pause(5_000);
+        stage = `${id}: fitting and enlarging the constellation`;
+        await fitAndZoom(page);
         stage = `${id}: recording MCP operations`;
         const started = performance.now();
         await action(page);
@@ -95,12 +112,14 @@ async function main() {
       await page.waitForFunction(() =>
         document.querySelector('#activity-list')?.textContent.includes("ChatGPT remember"),
       );
-      await pause(1_200);
+      await pause(3_500);
       await client.call("chatgpt", "remember", event);
       await page.waitForFunction(() =>
         document.querySelector('[data-source="chatgpt"] .source-count')?.textContent === "4",
       );
-      await pause(8_000);
+      await pause(4_000);
+      await fitAndZoom(page);
+      await pause(4_000);
     });
 
     await record("read", async (page) => {
@@ -109,23 +128,46 @@ async function main() {
       await client.call("claude", "open", { title: preference.title });
       await pause(1_000);
       const opened = await client.call("claude", "open", { title: event.title });
-      if (opened.note.source !== "chatgpt" || opened.note.days_ago !== 1) {
+      if (opened.note.source !== "chatgpt" || opened.note.kind !== "event" || opened.note.days_ago !== 1) {
         throw new Error("Dinner provenance or relative date did not match the demo.");
       }
       await page.waitForFunction(() =>
         document.querySelector("#activity-list")?.textContent.includes("Claude open"),
       );
+      stage = "read: selecting the dinner event and checking its visible details";
+      await page.locator("#browse-toggle").click();
+      await page.locator("#memory-list").getByRole("button", {
+        name: `${event.title} ChatGPT · event`, exact: true,
+      }).click();
+      await page.waitForFunction(({ title, summary, occurredAt }) =>
+        document.querySelector("#details")?.hidden === false &&
+        document.querySelector("#detail-title")?.textContent === title &&
+        document.querySelector("#detail-source")?.textContent === "ChatGPT" &&
+        document.querySelector("#detail-kind")?.textContent === "event" &&
+        document.querySelector("#detail-summary")?.textContent === summary &&
+        document.querySelector("#detail-date")?.getAttribute("datetime") === occurredAt &&
+        document.querySelector("#detail-body")?.textContent.includes("デミグラスソースのハンバーグを作り"),
+      event);
+      await page.locator("#browse-toggle").click();
+      await page.locator("#browser").waitFor({ state: "hidden" });
+      await page.locator("#details").waitFor({ state: "visible" });
+      await page.mouse.move(WIDTH / 2, 100);
+      await pause(1_500);
       await pause(8_000);
     });
 
     await record("group", async (page) => {
-      const toggle = page.getByRole("button", { name: "Group by AI", exact: true });
+      const toggle = page.locator("#split-toggle");
       await toggle.click();
       await page.locator('#split-toggle[aria-pressed="true"]').waitFor();
-      await pause(6_000);
-      await page.getByRole("button", { name: "Restore force layout", exact: true }).click();
+      await pause(8_000);
+      stage = "group: fitting all four separated AI clusters";
+      await fitAndZoom(page);
+      await pause(7_000);
+      await page.locator('#split-toggle[aria-pressed="true"]').waitFor();
+      await toggle.click();
       await page.locator('#split-toggle[aria-pressed="false"]').waitFor();
-      await pause(6_000);
+      await pause(3_000);
     });
   } finally {
     try {

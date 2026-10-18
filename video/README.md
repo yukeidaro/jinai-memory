@@ -1,6 +1,6 @@
 # Submission demo video
 
-This folder produces a **150-second, 1920x1080, 30fps H.264 MP4 without an audio
+This folder produces a **170-second, 1920x1080, 30fps H.264 MP4 without an audio
 track**, plus eight representative PNGs. It does not modify the product.
 The two supplied Japanese conversation screenshots remain unchanged; English
 translations explain the actual exchanges. No invented AI conversation is shown.
@@ -11,12 +11,12 @@ translations explain the actual exchanges. No invented AI conversation is shown.
 | --- | --- |
 | 0-10s | Jin AI Memory and the shared-memory promise |
 | 10-35s | Actual ChatGPT screenshot: proactively saved preference and dated meal |
-| 35-50s | Real product UI: scripted ChatGPT MCP writes and incoming nodes |
-| 50-80s | Actual Claude screenshot: the next-day dinner question and memory check |
-| 80-95s | Real product UI: scripted Claude `orient` and `open`, with access highlights |
-| 95-110s | Actual Group by AI control, then restore force layout |
-| 110-140s | Three README-exact FalkorDB Cypher queries and bounded entry map |
-| 140-150s | Closing message, repository and hackathon credit |
+| 35-55s | Enlarged product UI: scripted ChatGPT MCP writes and incoming nodes |
+| 55-85s | Actual Claude screenshot: the next-day dinner question and memory check |
+| 85-105s | Claude `orient` and `open`, then zoom into the dinner event with its body and ChatGPT attribution |
+| 105-130s | Group by AI: settle, fit all four clusters, hold, then briefly restore |
+| 130-160s | Three README-exact FalkorDB Cypher queries and bounded entry map |
+| 160-170s | Closing message, repository and hackathon credit |
 
 The UI recordings are **scripted MCP replays with fictional notes**, not
 recordings of the original ChatGPT/Claude tool calls. Each UI scene says so.
@@ -87,17 +87,41 @@ the real graph and the real live-event connection.
 Three separate pages/contexts produce `public/ui-write.webm`,
 `public/ui-read.webm` and `public/ui-group.webm`. Each page waits for the real
 canvas, a nonempty snapshot and live SSE, then settles for five seconds.
-The write scene saves two dinner memories, waits eight seconds; the read scene
-refreshes the map, opens both dinner notes and waits eight seconds.
-Group by AI runs for six seconds and the restored layout for another six.
+Before each action segment, capture clicks **Fit view**, waits 1.5 seconds,
+then sends three centered wheel events of -360, 250ms apart, and waits another
+second. With the pinned Three.js r160 OrbitControls at device scale 1, this
+is about 1.74x zoom, targeting 60-75% graph width; actual framing must
+be checked in CI because software WebGL and layout positions can vary.
+Wheel interaction follows Fit view so automatic fitting does not undo it.
+
+The write scene saves the first ChatGPT memory, waits 3.5 seconds, saves the
+second, waits four seconds for arrivals, fits/zooms again, then holds four
+seconds. The read scene refreshes the map, opens both dinner notes, and uses
+**Browse memories** to select the ChatGPT-authored dinner event. It checks the
+visible title, author, kind, date, summary and body, then closes only the browser
+with its toggle (not Escape), allows 1.5 seconds for the camera, and holds the
+open details for eight seconds. Group by AI settles for eight seconds, fits
+and zooms the separated layout, holds for seven seconds, and restores for three.
+The held shots finish before the product's ten-second idle auto-orbit resumes.
+Only public buttons, list items and mouse input control the graph; no product
+state or camera API is accessed by capture.
 The event's occurrence time is one day before capture, retaining its time of
 day so the product's whole-24-hour `days_ago` calculation returns one.
 
 `public/ui-timing.json` is published incrementally after each completed clip.
 Only completed clips are made available to the renderer. Remotion's FFprobe
 reads the actual WebM duration; tail-anchored trims remove variable page/CDN
-startup time, include a small lead-in, and slow each action segment to 15
-seconds without looping or inventing frames. Temporary recordings are removed
+startup time, include a small lead-in, and slow the write/read/group action
+segments to 20/20/25 seconds without looping or inventing frames. Overlong
+action segments fail explicitly rather than speeding playback up or reducing
+the readable holds below six seconds. The manifest is regenerated with measured
+action lengths on every capture; no guessed WebM durations are checked in.
+The read/group representative stills fall late in their scenes, targeting the
+open memory and settled grouping, not the initial overview or restored layout.
+Graph-only captions use 28px text below the graph, inset beyond the left legend
+and right detail panel. The replay and access caveats remain, also inset so
+they do not cover the legend or the selected memory's title/body.
+Temporary recordings are removed
 when capture exits normally or fails through its error handler.
 
 `npm run render` and `npm run stills` check the manifest and file existence
@@ -137,7 +161,7 @@ The artifact contains:
 - `public/ui-*.webm` and `public/ui-timing.json`: completed raw UI clips and timing.
 
 `npm run inspect` uses **Remotion's FFprobe**, logs media properties and fails
-unless the actual output is H.264, 150 seconds (within one frame), 1920x1080,
+unless the actual output is H.264, 170 seconds (within one frame), 1920x1080,
 30fps and has no audio stream. Eight stills are rendered in one CLI invocation
 with its documented sparse `--frames` option. Rendering uses concurrency 2,
 one video decoder thread and a 256 MiB video-frame cache for CI memory headroom.
@@ -188,9 +212,11 @@ The product repository's own AGPL license is unchanged.
 ## Implementation decisions / work log
 
 Hypothesis: separate real UI recordings plus validated metadata allow a
-150-second composition to render independently of capture success.
+170-second composition to render independently of capture success.
 
-The timeline follows the brief exactly. Screenshots have a slow 1.0-1.035
+The v2 timeline changes only the three graph scene lengths; the title,
+conversation, FalkorDB and closing scenes keep their v1 content and lengths.
+Screenshots have a slow 1.0-1.035
 Ken Burns zoom without cropping their content; subtitles fade in/out.
 Arial/Helvetica and system monospace avoid extra font packages or downloads.
 The three recording contexts avoid uncertain single-video scene boundaries;
@@ -215,7 +241,7 @@ Local validation on Node 24:
 | `node --check video/capture/capture.mjs` | Passed |
 | `node --check` for `scenario.mjs`, `render.mjs`, `timeline.mjs`, `verify.mjs` | Passed |
 | `node video/verify.mjs` | Passed: actual HTTP/MCP scenario, four authors, yesterday's event, Claude reads, access events and zero read embeddings |
-| Rendering-input assertions in `verify.mjs` | Passed: 4,500 contiguous frames, eight representative still positions, README-exact Cypher, missing/partial-file fallback, timing and output-format guards |
+| Rendering-input assertions in `verify.mjs` | Passed: 5,100 contiguous frames, unchanged non-graph scene lengths, eight representative still positions, README-exact Cypher, missing/partial-file fallback, all three clip timings, no speed-up and output-format guards |
 | Root `node --test` | 196 tests: 195 passed, 1 opt-in real-FalkorDB test skipped, 0 failed |
 | JSX inspection | Manually checked balanced tags/braces, local imports and all Remotion import names against official docs; not compiled locally |
 | Workflow inspection | Manually reviewed structure, Bash steps and expressions; text assertions confirm no tabs, even indentation and the three action references pinned to `@v4` |
@@ -232,4 +258,7 @@ Browser capture, JSX compilation, Remotion rendering and Actions execution
 were **not run locally**; no dependency installation was attempted on this PC.
 First CI risks to inspect: browser CDN/WebGL/SSE readiness, first-render Chrome
 download, media extraction and runtime/memory under the 30-minute job limit.
-No real FalkorDB integration was attempted.
+For v2, also check that graph width actually reaches 60-75%, all four AI
+clusters fit without clipping, the read still shows the correct body and
+ChatGPT badge, and slower UI operations do not overrun the 20/20/25-second
+scene budgets. These visual results are not verified by local Node checks.

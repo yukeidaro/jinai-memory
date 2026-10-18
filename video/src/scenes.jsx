@@ -105,14 +105,15 @@ export function GraphScene({ duration, clip, title, captions, read = false }) {
       <div
         style={{
           position: "absolute",
-          top: 125,
-          right: 35,
+          top: 130,
+          left: 350,
+          right: 460,
           padding: "12px 18px",
           backgroundColor: "rgba(0, 0, 0, 0.9)",
           color: COLORS.muted,
-          fontSize: 21,
+          fontSize: 18,
           lineHeight: 1.4,
-          textAlign: "right",
+          textAlign: "center",
         }}
       >
         Scripted MCP replay / fictional demo notes
@@ -120,11 +121,11 @@ export function GraphScene({ duration, clip, title, captions, read = false }) {
         Local in-memory store / fake embeddings / slowed playback
       </div>
       {read ? (
-        <div style={{ position: "absolute", left: 90, bottom: 215, fontSize: 23, color: COLORS.muted, backgroundColor: "#000d", padding: 12 }}>
+        <div style={{ position: "absolute", left: 350, right: 460, bottom: 185, fontSize: 18, color: COLORS.muted, backgroundColor: "#000d", padding: 12 }}>
           Highlights record server-side memory access, not proof of model reasoning.
         </div>
       ) : null}
-      <Captions items={captions} />
+      <Captions items={captions} graph />
     </Scene>
   );
 }

@@ -95,7 +95,12 @@ async function verifyRenderingInputs() {
     end += scene.seconds;
   }
   assert.equal(end * FPS, DURATION);
-  assert.equal(DURATION, 4500);
+  assert.equal(DURATION, 5100);
+  assert.ok(end >= 120 && end <= 180);
+  assert.deepEqual(
+    SCENES.filter((scene) => !Object.hasOwn(CLIP_FILES, scene.id)).map(({ id, seconds }) => [id, seconds]),
+    [["intro", 10], ["chatgpt", 25], ["claude", 30], ["falkordb", 30], ["outro", 10]],
+  );
   assert.equal(SCENES.length, 8);
   const readme = (await readFile(path.join(videoDir, "..", "README.md"), "utf8")).replace(/\r\n/g, "\n");
   for (const query of CYPHER) assert.ok(readme.includes(query.code), `README query differs: ${query.title}`);
@@ -121,7 +126,36 @@ async function verifyRenderingInputs() {
     assert.deepEqual(Object.keys(clips), ["write"]);
     assert.equal(clips.write.trimBefore, 302);
     assert.equal(clips.write.sourceFrames, 296);
-    assert.equal(clips.write.playbackRate * 450, 296);
+    assert.equal(clips.write.playbackRate * 600, 296);
+    manifest.clips.read = { file: CLIP_FILES.read, tailSeconds: 14 };
+    manifest.clips.group = { file: CLIP_FILES.group, tailSeconds: 22 };
+    await writeFile(path.join(temporaryDir, CLIP_FILES.read), "probe stub, not media");
+    await writeFile(path.join(temporaryDir, CLIP_FILES.group), "probe stub, not media");
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    const allClips = await loadClips(temporaryDir, async () => ({
+      format: { duration: "40" },
+      streams: [{ codec_type: "video", width: WIDTH, height: HEIGHT }],
+    }), warn);
+    assert.deepEqual(Object.keys(allClips), ["write", "read", "group"]);
+    for (const [id, clip] of Object.entries(allClips)) {
+      const scene = SCENES.find((value) => value.id === id);
+      assert.ok(clip.trimBefore >= 0);
+      assert.ok(clip.playbackRate > 0 && clip.playbackRate <= 1);
+      assert.equal(clip.playbackRate * scene.seconds * FPS, clip.sourceFrames);
+    }
+    assert.ok(8 / allClips.read.playbackRate >= 6);
+    assert.ok(7 / allClips.group.playbackRate >= 6);
+    for (const id of Object.keys(CLIP_FILES)) {
+      const tailSeconds = manifest.clips[id].tailSeconds;
+      manifest.clips[id].tailSeconds = SCENES.find((scene) => scene.id === id).seconds;
+      await writeFile(manifestPath, JSON.stringify(manifest));
+      await assert.rejects(loadClips(temporaryDir, async () => ({
+        format: { duration: "40" },
+        streams: [{ codec_type: "video", width: WIDTH, height: HEIGHT }],
+      }), warn), /refusing to speed up/);
+      manifest.clips[id].tailSeconds = tailSeconds;
+    }
+    await writeFile(manifestPath, JSON.stringify(manifest));
     await assert.rejects(loadClips(temporaryDir, async () => ({
       format: { duration: "20" },
       streams: [{ codec_type: "video", width: 800, height: 600 }],
@@ -137,14 +171,14 @@ async function verifyRenderingInputs() {
     await rm(temporaryDir, { recursive: true, force: true });
   }
   const metadata = {
-    format: { duration: "150.0" },
+    format: { duration: "170.0" },
     streams: [{
       codec_type: "video", codec_name: "h264", width: WIDTH, height: HEIGHT,
       avg_frame_rate: "30/1",
     }],
   };
   assert.deepEqual(validateOutput(metadata), {
-    seconds: 150, width: 1920, height: 1080, fps: 30, audioStreams: 0,
+    seconds: 170, width: 1920, height: 1080, fps: 30, audioStreams: 0,
   });
   for (const change of [
     (value) => { value.format.duration = "181"; },
@@ -163,7 +197,7 @@ async function verifyRenderingInputs() {
   ]) {
     assert.throws(() => captureConfig({ JINAI_URL: url, JINAI_TOKEN: "disposable" }), /loopback/);
   }
-  console.log("Rendering inputs verified: 150s timeline, 8 still frames, README-exact Cypher, missing/partial capture fallback, clip timing, output format guards, loopback-only capture.");
+  console.log("Rendering inputs verified: 170s timeline, unchanged non-graph scene lengths, 8 still frames, README-exact Cypher, missing/partial capture fallback, clip timing, output format guards, loopback-only capture.");
 }
 
 await verifyScenario();
