@@ -4,3 +4,4 @@ out/
 .verify-*/
 public/ui-*.webm
 public/ui-timing.json
+public/frames/

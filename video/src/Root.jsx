@@ -1,7 +1,7 @@
 import React from "react";
 import { Composition } from "remotion";
 import { Demo } from "./Demo.jsx";
-import { DURATION, FPS, HEIGHT, WIDTH } from "./timeline.mjs";
+import { buildTimeline, DURATION, FPS, HEIGHT, WIDTH } from "./timeline.mjs";
 
 export const RemotionRoot = () => (
   <Composition
@@ -12,5 +12,8 @@ export const RemotionRoot = () => (
     width={WIDTH}
     height={HEIGHT}
     defaultProps={{ clips: {} }}
+    calculateMetadata={({ props }) => ({
+      durationInFrames: buildTimeline(props.clips).durationInFrames,
+    })}
   />
 );

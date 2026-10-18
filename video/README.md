@@ -1,264 +1,311 @@
-# Submission demo video
+# Submission demo video v3
 
-This folder produces a **170-second, 1920x1080, 30fps H.264 MP4 without an audio
-track**, plus eight representative PNGs. It does not modify the product.
-The two supplied Japanese conversation screenshots remain unchanged; English
-translations explain the actual exchanges. No invented AI conversation is shown.
+Produces a **2:00-3:00, 1920x1080, 30fps H.264 MP4 with no audio stream** and
+nine representative PNGs. The default timeline is **162.5 seconds**; completed
+captures can extend their own graph scenes, up to a 180-second total.
+Product files and the two supplied Japanese conversation screenshots are
+unchanged. The title, ChatGPT, Claude, FalkorDB and closing scenes retain their
+existing content and 10/25/30/30/10-second lengths.
 
-## What the video shows
+## Scenes and timing
 
-| Time | Scene |
+| Default time | Scene |
 | --- | --- |
-| 0-10s | Jin AI Memory and the shared-memory promise |
-| 10-35s | Actual ChatGPT screenshot: proactively saved preference and dated meal |
-| 35-55s | Enlarged product UI: scripted ChatGPT MCP writes and incoming nodes |
-| 55-85s | Actual Claude screenshot: the next-day dinner question and memory check |
-| 85-105s | Claude `orient` and `open`, then zoom into the dinner event with its body and ChatGPT attribution |
-| 105-130s | Group by AI: settle, fit all four clusters, hold, then briefly restore |
-| 130-160s | Three README-exact FalkorDB Cypher queries and bounded entry map |
-| 160-170s | Closing message, repository and hackathon credit |
+| 0-10s | Jin AI Memory title |
+| 10-35s | Actual ChatGPT screenshot and English translation |
+| 35-53s | 2D: two ChatGPT-authored memories arrive; teal author count goes 2 -> 3 -> 4 |
+| 53-83s | Actual Claude screenshot and English translation |
+| 83-101s | 2D: Claude accesses the dinner notes; select the event and show its ChatGPT author, date, summary and body |
+| 101-119s | 2D: Group by AI, settle, fit and hold all four clusters |
+| 119-122.5s | Same graph, also in 3D. |
+| 122.5-152.5s | Unchanged README-exact FalkorDB queries and bounded entry map |
+| 152.5-162.5s | Unchanged closing message |
 
-The UI recordings are **scripted MCP replays with fictional notes**, not
-recordings of the original ChatGPT/Claude tool calls. Each UI scene says so.
-The CI server intentionally uses **in-memory storage and fake embeddings** with
-no database credentials. It does not demonstrate a live FalkorDB connection.
-The database scene explains the implemented FalkorDB persistent adapter using
-the root README's actual queries. For this reason the write subtitle says
-"FalkorDB is the persistent backend", rather than falsely saying this CI capture
-saved data in FalkorDB.
+`buildTimeline()` is shared by the renderer, composition metadata, scene
+sequences, still selection and output inspection. Each graph scene is at least
+its default length, or `ceil(capture duration * 30)` frames if longer. For example,
+a 27.01-second group capture gets 811 frames instead of failing at the old
+25-second budget. All later scenes and stills move with it. Non-graph durations
+never change. If a capture is shorter than its scene, its last image is held;
+**motion is not slowed down, sped up, cut or looped**. The 3D capture must be
+3-4 seconds and is recorded after the grouped 2D scene on the same page.
 
-Highlights show server-side memory access, not proof of a model's reasoning.
-The 400-token bound is an **estimated** map size, including at 2,000 notes in
-the repository's in-memory response-size check, not a real-tokenizer or
-database-latency benchmark. Per-user graphs are namespaced, not a claim of a
-full multi-account authentication service.
+If measured extensions push the whole timeline beyond three minutes, rendering
+fails explicitly and asks for shorter capture waits. The three 18-second graph
+defaults leave 17.5 seconds of extension headroom. Do not solve an overrun by
+speeding up footage or reducing the readable detail/group holds below five seconds.
 
-## Local use (only where npm is available)
+## High-quality timestamped capture
 
-Use Node.js 22 or newer. From the repository root in PowerShell:
+`capture/capture.mjs` uses three fresh Chromium contexts, all opened with
+`?view=2d`. It waits specifically for the visible `#graph2d canvas`, the 2D
+toggle state, real graph data, live SSE and hidden error notices. Navigation,
+CDN startup and initial layout settling happen **before** capture starts.
+There is no Playwright `recordVideo` and no WebM extraction.
+
+The frame recorder in `capture/capture.mjs` opens a Playwright `CDPSession` and calls:
+
+```js
+await session.send("Page.startScreencast", {
+  format: "jpeg",
+  quality: 94,
+  maxWidth: 1920,
+  maxHeight: 1080,
+  everyNthFrame: 1,
+});
+```
+
+Every `Page.screencastFrame` receives a `Page.screencastFrameAck` with its
+`sessionId`, including frames not saved. Saved timestamps come from the CDP
+frame-swap `metadata.timestamp`, relative to the first captured frame.
+The writer saves at most **8 JPEGs/second** (125ms spacing), dropping frames
+while a disk write is pending rather than accumulating image buffers.
+The 30fps output selects the latest captured frame whose timestamp is not in
+the future. Missing frames therefore hold the previous image **without shifting
+later events in time**. There is no optical interpolation or cross-fading between
+captured images. Existing scene/caption entrance and exit fades remain.
+
+At 20 seconds, the cadence allows at most about 160 JPEGs. Typical 100-300 KiB
+frames would take about 16-47 MiB; these are estimates, not measured CI sizes.
+There is a **64 MiB hard limit per scene** and byte totals are printed at capture
+completion. Keep the 1080p frame size and quality >=92; lower the saved cadence
+or shorten unnecessary waits if CI approaches the limit. Do not silently exhaust
+the runner's disk. The renderer checks JPEG size headers and the same byte limit.
+Final rendering uses PNG intermediates and H.264 CRF 16, avoiding another lossy
+JPEG intermediate.
+
+Only if CDP cannot start, provides no first frame within five seconds, or lacks
+initial frame timestamps, capture prints a warning and switches to sequential
+`page.screenshot({type: "jpeg", quality: 94, scale: "css"})` calls separated by
+125ms. Screenshot timestamps use a monotonic clock, not an assumed frame rate.
+CDP ACK, ongoing timestamp and disk-write failures propagate rather than becoming
+success-shaped fallbacks. Capture stops the screencast and detaches its session
+before closing its own page/context.
+
+Generated files:
+
+```text
+public/ui-timing.json
+public/frames/ui-write/000001.jpg ...
+public/frames/ui-write/index.json
+public/frames/ui-read/000001.jpg ...
+public/frames/ui-read/index.json
+public/frames/ui-group/000001.jpg ...
+public/frames/ui-group/index.json
+public/frames/ui-3d/000001.jpg ...
+public/frames/ui-3d/index.json
+```
+
+Each index contains the scene, resolution, quality, capture method, measured
+duration, byte total and ordered `{file, time}` entries (seconds from frame zero).
+`ui-timing.json` version 2 points only to completed indexes and is published
+incrementally. No machine-specific timestamps, tokens or URLs appear in indexes.
+Generated frames and manifests are ignored by Git. A new capture removes only
+the four named generated frame directories and its manifest; it never changes
+the supplied images.
+
+### Framing and action holds
+
+Only public buttons, memory-list items and mouse input control the UI. Capture
+does not access or modify private product state, graph internals, camera APIs,
+CSS or image assets.
+
+- **Fit and position:** after data settles, click `#fit-view`, wait 1.2s, zoom out
+  with a +220 wheel event, then drag the upper canvas 120 CSS pixels right.
+  These values are in `FRAMING` with the reason beside them: clear the left
+  legend, which ends near x=318, while retaining room for node labels.
+  This replaces the old 3D-specific wheel-zoom assumption. Actual node placement
+  and label clearance must still be checked visually in CI.
+- **Write:** show the baseline briefly, save the first ChatGPT note and wait for
+  its author count to reach 3; wait 2.5s, save the dated event and wait for count 4;
+  allow arrivals to settle, fit/position again and hold four seconds.
+- **Read:** Claude calls `orient` and opens both notes. After the server-side
+  access highlight, Browse memories selects the exact dinner event. Capture
+  asserts its visible title, ChatGPT author, event kind, occurrence date, summary
+  and body. Close only the browser, leave the right detail panel open, allow
+  one second for selection movement, then hold **6.5 seconds**.
+- **Group:** click Group by AI, wait five seconds for the split layout, fit and
+  position it, then hold **6.5 seconds** with grouping still enabled. Do not
+  restore the layout inside this capture.
+- **3D:** after the group capture completes, click `#view-toggle` on that same
+  page, wait for the 3D canvas and toggle state, settle and fit outside capture,
+  then record about **3.5 seconds**. It shows the same data, not a new graph.
+
+Representative read/group stills are selected one second before the measured
+capture ends, inside their held states. The 3D still is also from its actual
+capture. Graph captions and caveats stay inset from the left legend and right
+detail panel; caption lengths follow measured scene frames.
+
+## Honesty and unavailable recordings
+
+UI scenes retain **Scripted MCP replay / fictional demo notes** and
+**Local in-memory store / fake embeddings**. They are not recordings of the
+original ChatGPT/Claude tool calls or a live FalkorDB session. The existing
+conversation screenshots and their English translations are preserved.
+The write subtitle continues to identify FalkorDB as the persistent backend,
+not as the backend used by this disposable CI capture.
+
+The read caveat remains: **Highlights record server-side memory access, not
+proof of model reasoning.** `slowed playback` was removed because frames now play
+at their captured times. The 400-token map size remains an estimate, including
+the in-memory 2,000-note check, not a tokenizer or database-latency benchmark.
+Per-user graphs are namespaced, not a full multi-account authentication claim.
+
+No manifest, an uncompleted scene, a missing index, or any missing JPEG makes
+that entire scene show **RECORDING UNAVAILABLE**, with its English subtitles;
+other completed scenes still render. Invalid JSON, paths, timestamps, quality,
+dimensions or corrupt JPEG headers fail explicitly. Direct Remotion usage
+without generated props also defaults to the clearly labeled unavailable scenes.
+
+Raw browser errors and token-bearing URLs are withheld. Capture logs its stage
+and error class; check local health, jsDelivr access, WebGL and live events at
+that stage. The frame capture includes only the viewport, not browser chrome.
+
+## Running elsewhere (npm-capable machine or CI only)
+
+Use Node.js 22 or newer. No npm/npx, browser capture, dependency installation or
+Remotion rendering was run on the implementation PC.
 
 ```powershell
 Push-Location .\video
 npm install --no-audit --no-fund
 npx playwright install --with-deps chromium
 Pop-Location
-
-# Only a fresh, disposable local server. Never use a real account token.
-$env:MEMORY_TOKEN = [guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N")
-$env:JINAI_TOKEN = $env:MEMORY_TOKEN
-$env:JINAI_URL = "http://127.0.0.1:8787"
-$env:PORT = "8787"
-$env:MEMORY_USER = "video-demo"
-$env:EMBEDDINGS_PROVIDER = "fake"
-$env:EMBED_DIM = "128"
-$env:FALKORDB_URL = ""
-$env:OPENAI_API_KEY = ""
-Remove-Item Env:MEMORY_USERS -ErrorAction SilentlyContinue
-$server = Start-Process node -ArgumentList ".\src\server.js" -NoNewWindow -PassThru
-
-# Wait for "Listening on port 8787", then confirm HTTP 200 before capture:
-(Invoke-WebRequest http://127.0.0.1:8787/healthz).StatusCode
-
-Push-Location .\video
-try {
-  npm run verify
-  npm run capture
-  npm run render
-  npm run stills
-  npm run inspect
-} finally {
-  Pop-Location
-  Stop-Process -Id $server.Id
-}
 ```
 
-On Linux, install in `video/`, use the same environment values, and run
-`node src/server.js` from the root before running the video scripts.
-No production host, personal files, AI account login or secrets are needed.
-The product browser does need network access to its existing jsDelivr imports.
-Remotion also downloads Chrome Headless Shell on its first render.
+Start a **fresh disposable loopback server**, with in-memory storage and fake
+embeddings, using a newly generated token, as in the existing workflow. Do not
+load real account credentials or production data. Once `/healthz` returns 200,
+set `JINAI_URL` to that loopback HTTP origin and `JINAI_TOKEN` to its disposable
+token, then run in `video`:
 
-Capture refuses non-loopback URLs and nonempty graphs. Restart the disposable
-server before repeating capture. Do not enable `?mock=1`: capture waits for
-the real graph and the real live-event connection.
+```powershell
+npm run verify
+npm run capture
+npm run render
+npm run stills
+npm run inspect
+```
 
-### Recordings and missing-footage behavior
+Capture refuses non-loopback URLs and nonempty graphs. Restart your own disposable
+server before repeating capture. Do not use `?mock=1`; the captures need real
+local HTTP/MCP operations and live events. The product needs its existing
+jsDelivr imports; Remotion downloads Chrome Headless Shell on first render.
 
-Three separate pages/contexts produce `public/ui-write.webm`,
-`public/ui-read.webm` and `public/ui-group.webm`. Each page waits for the real
-canvas, a nonempty snapshot and live SSE, then settles for five seconds.
-Before each action segment, capture clicks **Fit view**, waits 1.5 seconds,
-then sends three centered wheel events of -360, 250ms apart, and waits another
-second. With the pinned Three.js r160 OrbitControls at device scale 1, this
-is about 1.74x zoom, targeting 60-75% graph width; actual framing must
-be checked in CI because software WebGL and layout positions can vary.
-Wheel interaction follows Fit view so automatic fitting does not undo it.
+Checks available on this PC, without installing anything:
 
-The write scene saves the first ChatGPT memory, waits 3.5 seconds, saves the
-second, waits four seconds for arrivals, fits/zooms again, then holds four
-seconds. The read scene refreshes the map, opens both dinner notes, and uses
-**Browse memories** to select the ChatGPT-authored dinner event. It checks the
-visible title, author, kind, date, summary and body, then closes only the browser
-with its toggle (not Escape), allows 1.5 seconds for the camera, and holds the
-open details for eight seconds. Group by AI settles for eight seconds, fits
-and zooms the separated layout, holds for seven seconds, and restores for three.
-The held shots finish before the product's ten-second idle auto-orbit resumes.
-Only public buttons, list items and mouse input control the graph; no product
-state or camera API is accessed by capture.
-The event's occurrence time is one day before capture, retaining its time of
-day so the product's whole-24-hour `days_ago` calculation returns one.
+```powershell
+Get-ChildItem .\video\capture\*.mjs | ForEach-Object { node --check $_.FullName }
+node --check .\video\render.mjs
+node --check .\video\src\timeline.mjs
+node --check .\video\verify.mjs
+node .\video\verify.mjs
+node --test
+```
 
-`public/ui-timing.json` is published incrementally after each completed clip.
-Only completed clips are made available to the renderer. Remotion's FFprobe
-reads the actual WebM duration; tail-anchored trims remove variable page/CDN
-startup time, include a small lead-in, and slow the write/read/group action
-segments to 20/20/25 seconds without looping or inventing frames. Overlong
-action segments fail explicitly rather than speeding playback up or reducing
-the readable holds below six seconds. The manifest is regenerated with measured
-action lengths on every capture; no guessed WebM durations are checked in.
-The read/group representative stills fall late in their scenes, targeting the
-open memory and settled grouping, not the initial overview or restored layout.
-Graph-only captions use 28px text below the graph, inset beyond the left legend
-and right detail panel. The replay and access caveats remain, also inset so
-they do not cover the legend or the selected memory's title/body.
-Temporary recordings are removed
-when capture exits normally or fails through its error handler.
+`verify.mjs` checks the real disposable HTTP/MCP scenario, CDP **mocks** and
+screenshot fallback, timestamp selection with irregular gaps, completed/partial/
+missing frame inputs, JPEG headers and path guards, dynamic timeline extension
+(including a group capture longer than v2 allowed), unchanged non-graph lengths,
+nine still positions, README-exact Cypher and output-format guards. Header
+fixtures do not verify JPEG decoding. Node checks do not compile JSX or prove
+visual sharpness.
 
-`npm run render` and `npm run stills` check the manifest and file existence
-before passing props to the composition. With no capture they still render
-black graph scenes labeled **RECORDING UNAVAILABLE**, retaining the English
-subtitles. A partial capture uses only the completed existing clips. A corrupt
-manifest or invalid media raises an explicit error rather than concealing it.
-Directly running the Remotion CLI without the generated props deliberately
-uses the same no-footage default.
-
-No token-bearing URLs or raw browser errors are logged. The browser recording
-contains only the viewport, not address bars. Capture prints the failing stage
-and error class; check local health, jsDelivr access, WebGL and live-event
-readiness at that stage. Do not add raw URLs or account data to public artifacts.
-
-## GitHub Actions
-
-`.github/workflows/demo-video.yml` runs on pushes to `video/demo` affecting
-`video/**` or the workflow, and on `workflow_dispatch`. It uses Node 22 on
-`ubuntu-latest`, a 30-minute job limit, `contents: read`, and no `secrets.*`.
-
-It installs the pinned video dependencies with `npm install` (no supplied
-lockfile), installs Playwright Chromium and Linux libraries, verifies the demo
-scenario, generates a new masked disposable token, starts the product on 8787,
-and polls `/healthz`. The capture step has `continue-on-error`; failure emits a
-warning, and rendering/stills continue with the clearly labeled fallback.
-Artifacts are uploaded even after later failure and retained for **7 days**.
-Only this job's own saved server PID is used for cleanup.
-
-The artifact contains:
-
-- `out/demo.mp4`: the submission video.
-- `out/stills/`: eight PNG frames, one per scene.
-- `out/still-index.json`: scene names, seconds and frame numbers.
-- `out/media-info.json`: probed duration, dimensions, frame rate and audio count.
-- `out/render-props.json`, `out/server.log`, `out/server.pid`: diagnostics without tokens.
-- `public/ui-*.webm` and `public/ui-timing.json`: completed raw UI clips and timing.
-
-`npm run inspect` uses **Remotion's FFprobe**, logs media properties and fails
-unless the actual output is H.264, 170 seconds (within one frame), 1920x1080,
-30fps and has no audio stream. Eight stills are rendered in one CLI invocation
-with its documented sparse `--frames` option. Rendering uses concurrency 2,
-one video decoder thread and a 256 MiB video-frame cache for CI memory headroom.
-
-**Before submission:** inspect the capture step outcome, all eight PNGs,
-`media-info.json`, and the whole MP4. A green job with missing-footage warnings
-is useful for diagnosis, not a finished submission video.
-
-## Pinned packages and official API references
-
-These exact versions were confirmed via jsDelivr package metadata:
-
-| Package | Version | Metadata |
-| --- | --- | --- |
-| `remotion` | `4.0.536` | [package.json](https://cdn.jsdelivr.net/npm/remotion@4.0.536/package.json) |
-| `@remotion/cli` | `4.0.536` | [package.json](https://cdn.jsdelivr.net/npm/@remotion/cli@4.0.536/package.json) |
-| `react` | `19.2.3` | [package.json](https://cdn.jsdelivr.net/npm/react@19.2.3/package.json) |
-| `react-dom` | `19.2.3` | [package.json](https://cdn.jsdelivr.net/npm/react-dom@19.2.3/package.json) |
-| `playwright` (dev) | `1.64.1` | [package.json](https://cdn.jsdelivr.net/npm/playwright@1.64.1/package.json) |
-
-React/React DOM match the versions used in the pinned Remotion packages'
-development metadata. Both direct Remotion packages have the same version.
-
-Official references checked for this implementation:
-[registerRoot](https://www.remotion.dev/docs/register-root),
-[Composition](https://www.remotion.dev/docs/composition),
-[Sequence](https://www.remotion.dev/docs/sequence),
-[AbsoluteFill](https://www.remotion.dev/docs/absolute-fill),
-[useCurrentFrame](https://www.remotion.dev/docs/use-current-frame),
-[Img](https://www.remotion.dev/docs/img),
-[staticFile](https://www.remotion.dev/docs/staticfile),
-[OffthreadVideo](https://www.remotion.dev/docs/offthreadvideo),
-[interpolate](https://www.remotion.dev/docs/interpolate),
-[CLI render, props, frames and muted](https://www.remotion.dev/docs/cli/render),
-[FFprobe](https://www.remotion.dev/docs/cli/ffprobe),
-[Playwright video recording](https://playwright.dev/docs/videos).
-The JSX uses `OffthreadVideo` with `staticFile`, `trimBefore`,
-`durationInFrames`, `playbackRate` and `muted`; no TypeScript is used.
-
-## Remotion license
-
-Remotion 4 is source-available, not an unrestricted MIT dependency.
-Individuals and for-profit companies with **up to three employees** can use
-it free, including commercially. Larger for-profit organizations need a
-Company License. See the [official terms](https://www.remotion.dev/license).
-The product repository's own AGPL license is unchanged.
-
-## Implementation decisions / work log
-
-Hypothesis: separate real UI recordings plus validated metadata allow a
-170-second composition to render independently of capture success.
-
-The v2 timeline changes only the three graph scene lengths; the title,
-conversation, FalkorDB and closing scenes keep their v1 content and lengths.
-Screenshots have a slow 1.0-1.035
-Ken Burns zoom without cropping their content; subtitles fade in/out.
-Arial/Helvetica and system monospace avoid extra font packages or downloads.
-The three recording contexts avoid uncertain single-video scene boundaries;
-FFprobe tail anchoring avoids counting network startup as action footage.
-The initial single-WebM plan was replaced by separate clips to make scene
-boundaries explicit.
-
-Rejected: simulated graphs, synthetic AI chat, a real database service or
-production tokens, and an assumption that highlights prove model reasoning.
-Rejected: direct imports of recordings/timing into JSX, which would fail a
-bundle when recordings do not exist. File validation happens before rendering
-and the composition defaults to an empty clip list.
-
-The brief requests `.copilot-runs/notes/t12.md` but also expressly prohibits
-all edits outside `video/` and this workflow. The prohibition takes priority:
-this allowed README contains the work log instead.
-
-Local validation on Node 24:
+Local v3 results (2026-10-18):
 
 | Check | Result |
 | --- | --- |
-| `node --check video/capture/capture.mjs` | Passed |
-| `node --check` for `scenario.mjs`, `render.mjs`, `timeline.mjs`, `verify.mjs` | Passed |
-| `node video/verify.mjs` | Passed: actual HTTP/MCP scenario, four authors, yesterday's event, Claude reads, access events and zero read embeddings |
-| Rendering-input assertions in `verify.mjs` | Passed: 5,100 contiguous frames, unchanged non-graph scene lengths, eight representative still positions, README-exact Cypher, missing/partial-file fallback, all three clip timings, no speed-up and output-format guards |
-| Root `node --test` | 196 tests: 195 passed, 1 opt-in real-FalkorDB test skipped, 0 failed |
-| JSX inspection | Manually checked balanced tags/braces, local imports and all Remotion import names against official docs; not compiled locally |
-| Workflow inspection | Manually reviewed structure, Bash steps and expressions; text assertions confirm no tabs, even indentation and the three action references pinned to `@v4` |
-| Dependency versions | All five exact versions confirmed via the linked jsDelivr metadata |
+| `node --check` for both capture modules, renderer, timeline and verifier | Passed |
+| `node video/verify.mjs` | Passed: real local HTTP/MCP scenario plus mocked capture and rendering-input checks |
+| Root `node --test` | 210 passed, 0 failed, 0 skipped |
+| Static scene comparison against HEAD | Intro, both conversation components/props, FalkorDB and outro unchanged |
+| Product selector and 2D query grep | Existing in `public/index.html`, `public/app.js`, `public/view-mode.js`, `public/graph2d.js` |
+| Product paths and supplied image diff | No changes |
+| Browser capture / JSX build / Remotion / Actions | Not run locally |
 
-The initial README-query assertion exposed Windows CRLF versus JavaScript LF;
-the verifier now normalizes only the read string, without editing the product
-README. An LF-format check also caught this editor's Windows line endings;
-all new deliverables are normalized to LF before handoff.
-No YAML parser was installed; do not interpret the formatting assertions as
-full YAML/schema validation.
+## GitHub Actions
 
-Browser capture, JSX compilation, Remotion rendering and Actions execution
-were **not run locally**; no dependency installation was attempted on this PC.
-First CI risks to inspect: browser CDN/WebGL/SSE readiness, first-render Chrome
-download, media extraction and runtime/memory under the 30-minute job limit.
-For v2, also check that graph width actually reaches 60-75%, all four AI
-clusters fit without clipping, the read still shows the correct body and
-ChatGPT badge, and slower UI operations do not overrun the 20/20/25-second
-scene budgets. These visual results are not verified by local Node checks.
+The existing workflow still uses Node 22, `ubuntu-latest`, a 30-minute job
+limit, `contents: read`, no secrets, and a newly masked disposable local token.
+It installs the existing pinned packages and Chromium, runs verification,
+starts its own local server, checks health, then captures/renders/inspects.
+Capture remains `continue-on-error`, allowing explicit unavailable-scene output.
+Only this job's saved server PID is used for cleanup.
+
+The workflow change is limited to the nine-still step label and replacing the
+obsolete WebM artifact glob with `video/public/frames/`. Artifacts remain available
+for seven days, even if a later step fails:
+
+- `out/demo.mp4`, `out/stills/` (nine PNGs), `out/still-index.json`.
+- `out/media-info.json` (actual duration, size, fps and zero audio streams).
+- `out/render-props.json`, local server log and saved server PID.
+- `public/ui-timing.json` and `public/frames/` (JPEGs and timestamp indexes).
+
+`inspect` probes the actual MP4 using Remotion FFprobe and compares its length
+to the same measured timeline, enforcing 1920x1080, 30fps, H.264 and no audio.
+Rendering and sparse still extraction both use concurrency 2.
+
+**CI acceptance, to be checked by Claude/Yu:** check all four completed capture
+entries, byte totals, all nine stills and the full MP4. Confirm two teal writes,
+readable Japanese node labels and crisp lines, the correct ChatGPT/date/body in
+the right panel for >=5s, all four grouped clusters held for >=5s, and the actual
+3D view for 3-4s. Check final duration is 2:00-3:00. A green fallback render is a
+diagnostic artifact, not a finished submission video.
+
+Remaining CI risks: experimental CDP availability and optional timestamps (with
+explicit screenshot fallback), jsDelivr/WebGL/SSE readiness, Japanese font
+availability, force-layout framing and legend clearance, JPEG bytes per scene,
+the first Remotion browser download, and PNG/CRF-16 rendering time under the
+30-minute job limit. Real capture, JSX compilation, MP4 quality and Actions
+execution remain unverified locally.
+
+## Official API references
+
+Checked for v3:
+
+- [Playwright CDPSession](https://playwright.dev/docs/api/class-cdpsession):
+  `page.context().newCDPSession(page)`, `send`, `on` and `detach`.
+- [CDP Page.startScreencast](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-startScreencast).
+- [CDP Page.screencastFrame](https://chromedevtools.github.io/devtools-protocol/tot/Page/#event-screencastFrame),
+  [screencastFrameAck](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-screencastFrameAck)
+  and [stopScreencast](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-stopScreencast).
+- [Official CDP JSON schema](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/json/browser_protocol.json):
+  directly checked the JPEG format, quality range 0-100, integer maxWidth/
+  maxHeight, positive everyNthFrame, integer sessionId and optional frame-swap
+  timestamp (`Network.TimeSinceEpoch`). The current documentation site redirects
+  old anchors to its new client-side viewer, so the authoritative schema was
+  also inspected directly.
+- [Playwright screenshot](https://playwright.dev/docs/api/class-page#page-screenshot).
+- [Remotion calculateMetadata](https://www.remotion.dev/docs/calculate-metadata):
+  dynamic composition duration from props.
+- [Remotion Img](https://www.remotion.dev/docs/img),
+  [staticFile](https://www.remotion.dev/docs/staticfile),
+  [useCurrentFrame](https://www.remotion.dev/docs/use-current-frame) and
+  [CLI rendering](https://www.remotion.dev/docs/cli/render).
+
+Existing package pins are unchanged: `remotion` and `@remotion/cli` 4.0.536,
+React and React DOM 19.2.3, Playwright 1.64.1. They were not installed or
+revalidated through package downloads for this change.
+
+## Decisions and rejected approaches
+
+Use high-quality JPEGs with timestamp-based sample-and-hold, not compressed
+Playwright WebM, guessed clip durations, tail trims or frame-count-based playback.
+Save at 8fps for disk headroom while rendering the final video at 30fps.
+Keep CDP as the primary method; screenshots are only its explicit fallback.
+Fit/pan through the real 2D controls, not product changes or synthetic graphs.
+Keep static scenes and supplied image assets unchanged. Retain all honest replay,
+storage, embedding and server-access disclosures; remove only the now-inaccurate
+slowed-playback disclosure.
+
+The old 25-second fixed group budget and restoration at its end were removed,
+not retried in CI. No actual browser-capture alternatives were executed on this
+PC.
+
+## Remotion license
+
+Remotion 4 is source-available, not an unrestricted MIT dependency. Individuals
+and for-profit companies with up to three employees can use it free, including
+commercially. Larger for-profit organizations need a Company License; see
+[the official terms](https://www.remotion.dev/license). The product repository's
+AGPL license is unchanged.

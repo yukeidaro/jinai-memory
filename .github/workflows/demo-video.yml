@@ -80,7 +80,7 @@ jobs:
       - name: Render silent 1080p MP4
         run: npm run render
 
-      - name: Render eight scene stills
+      - name: Render nine scene stills
         run: npm run stills
 
       - name: Probe and enforce output format
@@ -93,7 +93,7 @@ jobs:
           name: jinai-memory-demo-${{ github.run_number }}
           path: |
             video/out/
-            video/public/ui-*.webm
+            video/public/frames/
             video/public/ui-timing.json
           retention-days: 7
           if-no-files-found: warn

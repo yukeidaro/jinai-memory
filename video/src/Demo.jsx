@@ -2,9 +2,10 @@ import React from "react";
 import { AbsoluteFill, Sequence } from "remotion";
 import { COLORS, FONT } from "./common.jsx";
 import { Conversation, FalkorDBScene, GraphScene, Intro, Outro } from "./scenes.jsx";
-import { FPS, SCENES } from "./timeline.mjs";
+import { buildTimeline, FPS } from "./timeline.mjs";
 
 export function Demo({ clips = {} }) {
+  const timeline = buildTimeline(clips);
   const scenes = {
     intro: (duration) => <Intro duration={duration} />,
     chatgpt: (duration) => (
@@ -33,8 +34,8 @@ export function Demo({ clips = {} }) {
         duration={duration}
         clip={clips.write}
         title="ChatGPT writes two dinner memories"
-        captions={[{ from: 0, seconds: 20, lines: [
-          "The memories land in one shared graph. FalkorDB is the persistent backend.",
+        captions={[{ from: 0, seconds: duration / FPS, lines: [
+          "Two memories land in the shared 2D graph. FalkorDB is the persistent backend.",
           "Teal = written by ChatGPT.",
         ] }]}
       />
@@ -68,7 +69,7 @@ export function Demo({ clips = {} }) {
         clip={clips.read}
         title="Claude opens ChatGPT's dinner memories"
         read
-        captions={[{ from: 0, seconds: 20, lines: [
+        captions={[{ from: 0, seconds: duration / FPS, lines: [
           "You can see which memory it opened - written by ChatGPT, the day before.",
           "Amber particles = Claude reading. Teal nodes = ChatGPT's memories.",
         ] }]}
@@ -78,9 +79,19 @@ export function Demo({ clips = {} }) {
       <GraphScene
         duration={duration}
         clip={clips.group}
-        title="Group by AI, then restore the force layout"
-        captions={[{ from: 0, seconds: 25, lines: [
-          "Group by AI shows the bridges between assistants.",
+        title="Group by AI in 2D"
+        captions={[{ from: 0, seconds: duration / FPS, lines: [
+          "Group by AI: four authors, four clusters, one shared 2D graph.",
+        ] }]}
+      />
+    ),
+    "ui-3d": (duration) => (
+      <GraphScene
+        duration={duration}
+        clip={clips["ui-3d"]}
+        title="The same graph in 3D"
+        captions={[{ from: 0, seconds: duration / FPS, lines: [
+          "Same graph, also in 3D.",
         ] }]}
       />
     ),
@@ -89,9 +100,9 @@ export function Demo({ clips = {} }) {
   };
   return (
     <AbsoluteFill style={{ backgroundColor: COLORS.background, color: COLORS.white, fontFamily: FONT }}>
-      {SCENES.map(({ id, start, seconds }) => (
-        <Sequence key={id} name={id} from={start * FPS} durationInFrames={seconds * FPS}>
-          {scenes[id](seconds * FPS)}
+      {timeline.scenes.map(({ id, startFrame, durationInFrames }) => (
+        <Sequence key={id} name={id} from={startFrame} durationInFrames={durationInFrames}>
+          {scenes[id](durationInFrames)}
         </Sequence>
       ))}
     </AbsoluteFill>

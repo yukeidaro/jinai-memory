@@ -1,7 +1,7 @@
 import React from "react";
-import { AbsoluteFill, Img, interpolate, OffthreadVideo, Sequence, staticFile, useCurrentFrame } from "remotion";
+import { AbsoluteFill, Img, interpolate, Sequence, staticFile, useCurrentFrame } from "remotion";
 import { Captions, COLORS, Eyebrow, Scene } from "./common.jsx";
-import { CYPHER, FPS } from "./timeline.mjs";
+import { CYPHER, FPS, frameAtTime } from "./timeline.mjs";
 
 export function Intro({ duration }) {
   return (
@@ -80,15 +80,13 @@ export function Conversation({ duration, assistant, image, heading, quote, facts
 }
 
 export function GraphScene({ duration, clip, title, captions, read = false }) {
+  const frame = useCurrentFrame();
+  const image = clip ? frameAtTime(clip.frames, frame / FPS) : null;
   return (
     <Scene duration={duration}>
       {clip ? (
-        <OffthreadVideo
-          src={staticFile(clip.file)}
-          trimBefore={clip.trimBefore}
-          durationInFrames={clip.sourceFrames}
-          playbackRate={clip.playbackRate}
-          muted
+        <Img
+          src={staticFile(`${clip.directory}/${image.file}`)}
           style={{ width: "100%", height: "100%", objectFit: "contain" }}
         />
       ) : (
@@ -118,7 +116,7 @@ export function GraphScene({ duration, clip, title, captions, read = false }) {
       >
         Scripted MCP replay / fictional demo notes
         <br />
-        Local in-memory store / fake embeddings / slowed playback
+        Local in-memory store / fake embeddings
       </div>
       {read ? (
         <div style={{ position: "absolute", left: 350, right: 460, bottom: 185, fontSize: 18, color: COLORS.muted, backgroundColor: "#000d", padding: 12 }}>

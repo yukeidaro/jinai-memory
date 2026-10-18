@@ -65,8 +65,8 @@ function Caption({ lines, duration, graph }) {
 
 export function Captions({ items, graph = false }) {
   return items.map(({ from, seconds, lines }) => (
-    <Sequence key={from} from={from * FPS} durationInFrames={seconds * FPS}>
-      <Caption lines={lines} duration={seconds * FPS} graph={graph} />
+    <Sequence key={from} from={Math.round(from * FPS)} durationInFrames={Math.round(seconds * FPS)}>
+      <Caption lines={lines} duration={Math.round(seconds * FPS)} graph={graph} />
     </Sequence>
   ));
 }
