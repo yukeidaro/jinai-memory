@@ -18,6 +18,12 @@ One memory for every AI you use. Bring what you already have, share it between C
 | --- | --- |
 | <img src="docs/images/real-chatgpt-saves.jpg" alt="ChatGPT confirms it saved tonight's dinner choice to the shared memory; the graph shows the new note." width="420"> | <img src="docs/images/real-npx-init.jpg" alt="Terminal running npx jinai-memory init: Claude Code and Codex added, existing memory previewed." width="420"> |
 
+### The shared memory graph (real screen)
+
+<img src="docs/images/real-graph.jpg" alt="Real screen of the Jin AI Memory graph: notes colored by the AI that wrote them (Claude orange, ChatGPT teal, Cursor purple, Copilot green), linked by topic and similarity in FalkorDB." width="100%">
+
+*Each dot is a Markdown memory, colored by the AI that wrote it; lines are FalkorDB edges (shared topics, similarity, session order).*
+
 ## Demo
 
 **Demo video:** [Watch on YouTube](https://youtu.be/1_GeZ6HTHMY) (about 1 minute)
