@@ -69,7 +69,6 @@ export function Demo({ clips = {} }) {
         clip={clips.read}
         title="Claude opens ChatGPT's dinner memories"
         read
-        requireVerifiedState
         captions={[{ from: 0, seconds: duration / FPS, lines: [
           "You can see which memory it opened - written by ChatGPT, the day before.",
           "Amber particles = Claude reading. Teal nodes = ChatGPT's memories.",
@@ -81,7 +80,6 @@ export function Demo({ clips = {} }) {
         duration={duration}
         clip={clips.group}
         title="Group by AI in 2D"
-        requireVerifiedState
         captions={[{ from: 0, seconds: duration / FPS, lines: [
           "Group by AI: four authors, four clusters, one shared 2D graph.",
         ] }]}

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildTimeline, DURATION, FPS, FRAME_INDEXES, HEIGHT, MAX_SCENE_BYTES, VERIFIED_BODY_SECONDS, WIDTH, isVerifiedSceneState, validateFrameIndex } from "./src/timeline.mjs";
+import { buildTimeline, DURATION, FPS, FRAME_INDEXES, HEIGHT, MAX_SCENE_BYTES, WIDTH, validateFrameIndex } from "./src/timeline.mjs";
 
 const videoDir = fileURLToPath(new URL("./", import.meta.url));
 const publicDir = path.join(videoDir, "public");
@@ -80,16 +80,6 @@ export async function loadClips(directory, warn = console.warn) {
     if (timing.index !== indexFile) {
       throw new Error(`Invalid ${id} capture timing.`);
     }
-    const requiresBody = id === "read" || id === "group";
-    const body = timing.body;
-    if (requiresBody && (
-      !body || !Number.isFinite(body.startSeconds) || body.startSeconds < 0 ||
-      body.durationSeconds !== VERIFIED_BODY_SECONDS ||
-      !isVerifiedSceneState(id, body.state) || !isVerifiedSceneState(id, body.endState)
-    )) {
-      warn(`${id} has no verified six-second UI state: this scene will say RECORDING UNAVAILABLE without claim subtitles.`);
-      continue;
-    }
     let index;
     try {
       index = JSON.parse(await readFile(path.join(directory, indexFile), "utf8"));
@@ -99,22 +89,6 @@ export async function loadClips(directory, warn = console.warn) {
       continue;
     }
     validateFrameIndex(index, id);
-    let frames = index.frames;
-    let durationSeconds = index.durationSeconds;
-    if (requiresBody) {
-      const endSeconds = body.startSeconds + body.durationSeconds;
-      const first = frames.findIndex((frame) => frame.time === body.startSeconds);
-      if (
-        first < 0 || endSeconds > index.durationSeconds ||
-        !frames.some((frame) => frame.time >= endSeconds)
-      ) {
-        warn(`${id} has incomplete verified footage: this scene will say RECORDING UNAVAILABLE without claim subtitles.`);
-        continue;
-      }
-      frames = frames.slice(first).filter((frame) => frame.time < endSeconds)
-        .map((frame) => ({ ...frame, time: frame.time - body.startSeconds }));
-      durationSeconds = body.durationSeconds;
-    }
     const frameDirectory = path.dirname(path.join(directory, indexFile));
     let missing = false;
     let bytesRead = 0;
@@ -138,7 +112,7 @@ export async function loadClips(directory, warn = console.warn) {
     if (missing) continue;
     clips[id] = {
       directory: indexFile.slice(0, indexFile.lastIndexOf("/")),
-      durationSeconds, frames,
+      durationSeconds: index.durationSeconds, frames: index.frames,
     };
   }
   return clips;

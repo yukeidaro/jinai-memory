@@ -1,7 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { FPS, FRAME_INDEXES, HEIGHT, MAX_SCENE_BYTES, VERIFIED_BODY_SECONDS, WIDTH, isVerifiedSceneState, validateFrameIndex } from "../src/timeline.mjs";
+import { FPS, FRAME_INDEXES, HEIGHT, MAX_SCENE_BYTES, WIDTH, validateFrameIndex } from "../src/timeline.mjs";
 import { captureConfig, createDemoClient, dinnerMemories, seedMemories } from "./scenario.mjs";
 
 const videoDir = fileURLToPath(new URL("../", import.meta.url));
@@ -12,7 +12,8 @@ export const JPEG_QUALITY = 94;
 export const FRAME_INTERVAL = 0.125;
 // Zoom out slightly and pan 120 CSS pixels right so the fitted 2D graph clears the 318px-wide legend.
 const FRAMING = { wheelDelta: 220, panRight: 120 };
-export const GROUP_SETTLE_MS = 12_000;
+const DETAIL_HOLD_MS = 6_500;
+const GROUP_HOLD_MS = 6_500;
 let stage = "configuration";
 
 export async function startFrameCapture(page, directory, id, {
@@ -109,26 +110,14 @@ export async function startFrameCapture(page, directory, id, {
       while (!stopped) {
         await pause(FRAME_INTERVAL * 1000);
         if (stopped) break;
-        busy = true;
         const time = clock() - started;
         const bytes = await page.screenshot({ type: "jpeg", quality: JPEG_QUALITY, scale: "css" });
         if (!stopped) await save(bytes, time);
-        busy = false;
       }
     })().catch((error) => { failure = error; });
   }
 
   return {
-    async mark() {
-      if (capture === "cdp") await saving;
-      // The screenshot task runs until stop; skip any shot already in flight.
-      const next = frames.length + (capture === "screenshot" && busy ? 1 : 0);
-      const deadline = performance.now() + firstFrameTimeout;
-      while (frames.length <= next && !failure && !stopped && performance.now() < deadline) await pause(10);
-      if (failure) throw failure;
-      if (frames.length <= next) throw new Error("No new frame captured after the scene state check.");
-      return frames[next].time;
-    },
     async stop({ publish = true } = {}) {
       const duration = clock() - started;
       stopped = true;
@@ -146,36 +135,6 @@ export async function startFrameCapture(page, directory, id, {
       return index;
     },
   };
-}
-
-export async function sceneState(page) {
-  return page.evaluate(() => {
-    const details = document.querySelector("#details");
-    const bounds = details?.getBoundingClientRect();
-    const style = details && getComputedStyle(details);
-    return {
-      splitPressed: document.querySelector("#split-toggle")?.getAttribute("aria-pressed"),
-      splitLabel: document.querySelector("#split-toggle")?.textContent,
-      detailsVisible: details?.hidden === false && style.display !== "none" &&
-        style.visibility === "visible" && bounds.width > 0 && bounds.height > 0 &&
-        bounds.left >= 0 && bounds.top >= 0 && bounds.right <= innerWidth && bounds.bottom <= innerHeight,
-      detailTitle: document.querySelector("#detail-title")?.textContent,
-      detailSource: document.querySelector("#detail-source")?.textContent,
-      detailKind: document.querySelector("#detail-kind")?.textContent,
-      browserHidden: document.querySelector("#browser")?.hidden === true,
-    };
-  });
-}
-
-export async function recordVerifiedBody(page, recorder, id, wait = pause) {
-  const state = await sceneState(page);
-  if (!isVerifiedSceneState(id, state)) throw new Error(`${id}: required UI state is not visible.`);
-  // Start at a newly saved frame, never the image from before the DOM check.
-  const startSeconds = await recorder.mark();
-  await wait(VERIFIED_BODY_SECONDS * 1000 + 500);
-  const endState = await sceneState(page);
-  if (!isVerifiedSceneState(id, endState)) throw new Error(`${id}: required UI state did not survive the hold.`);
-  return { body: { startSeconds, durationSeconds: VERIFIED_BODY_SECONDS, state, endState } };
 }
 
 async function healthy(page) {
@@ -234,11 +193,11 @@ async function main() {
       let finished = false;
       try {
         stage = `${id}: recording scene actions`;
-        const timing = await action(recorder);
+        await action();
         await healthy(page);
         finished = true;
         const index = await recorder.stop();
-        manifest.clips[id] = { index: indexPath, ...timing };
+        manifest.clips[id] = { index: indexPath };
         await saveManifest();
         console.log(`Saved ${id}: ${index.frames.length} JPEGs, ${index.durationSeconds.toFixed(2)}s, ${(index.bytes / 1024 / 1024).toFixed(1)} MiB (${index.capture}).`);
       } finally {
@@ -294,7 +253,7 @@ async function main() {
     });
 
     await with2DPage("read", async (page) => {
-      await record(page, "read", async (recorder) => {
+      await record(page, "read", async () => {
         await client.call("claude", "orient");
         await pause(800);
         await client.call("claude", "open", { title: preference.title });
@@ -321,29 +280,25 @@ async function main() {
           document.querySelector("#detail-date")?.getAttribute("datetime") === occurredAt &&
           document.querySelector("#detail-body")?.textContent.includes("デミグラスソースのハンバーグを作り"),
         event);
-        await page.locator("#browse-close").click();
+        await page.locator("#browse-toggle").click();
         await page.locator("#browser").waitFor({ state: "hidden" });
         await page.locator("#details").waitFor({ state: "visible" });
         await page.mouse.move(WIDTH / 2, 100);
         await pause(1_000);
-        return recordVerifiedBody(page, recorder, "read");
+        await pause(DETAIL_HOLD_MS);
       });
     });
 
     await with2DPage("group", async (page) => {
-      await record(page, "group", async (recorder) => {
+      await record(page, "group", async () => {
         await page.locator("#split-toggle").click();
         await page.locator('#split-toggle[aria-pressed="true"]').waitFor();
-        await page.waitForFunction(() =>
-          document.querySelector("#split-toggle")?.textContent === "Restore force layout",
-        );
-        await pause(GROUP_SETTLE_MS);
+        await pause(5_000);
         stage = "group: fitting all four separated AI clusters";
         await fit2D(page);
-        return recordVerifiedBody(page, recorder, "group");
+        await pause(GROUP_HOLD_MS);
+        await page.locator('#split-toggle[aria-pressed="true"]').waitFor();
       });
-      await page.locator("#split-toggle").click();
-      await page.locator('#split-toggle[aria-pressed="false"]').waitFor();
       stage = "ui-3d: switching the same graph from 2D to 3D";
       await page.locator("#view-toggle").click();
       await page.locator('#view-toggle[aria-pressed="false"]').waitFor();

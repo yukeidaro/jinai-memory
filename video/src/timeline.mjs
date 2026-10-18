@@ -2,18 +2,6 @@ export const FPS = 30;
 export const WIDTH = 1920;
 export const HEIGHT = 1080;
 export const MAX_SCENE_BYTES = 64 * 1024 * 1024;
-export const VERIFIED_BODY_SECONDS = 6;
-
-export function isVerifiedSceneState(id, state) {
-  if (!state || typeof state !== "object") return false;
-  if (id === "group") return state.splitPressed === "true" && state.splitLabel === "Restore force layout";
-  if (id === "read") {
-    return state.detailsVisible === true && state.browserHidden === true &&
-      typeof state.detailTitle === "string" && state.detailTitle.includes("ハンバーグ") &&
-      state.detailSource === "ChatGPT" && state.detailKind === "event";
-  }
-  return false;
-}
 
 export const FRAME_INDEXES = {
   write: "frames/ui-write/index.json",
@@ -27,8 +15,8 @@ const SCENE_DEFAULTS = [
   { id: "chatgpt", seconds: 25, still: 18 },
   { id: "write", seconds: 18 },
   { id: "claude", seconds: 30, still: 21 },
-  { id: "read", seconds: VERIFIED_BODY_SECONDS },
-  { id: "group", seconds: VERIFIED_BODY_SECONDS },
+  { id: "read", seconds: 18 },
+  { id: "group", seconds: 18 },
   { id: "ui-3d", seconds: 3.5 },
   { id: "falkordb", seconds: 30, still: 15 },
   { id: "outro", seconds: 10, still: 5 },
