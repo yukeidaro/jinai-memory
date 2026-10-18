@@ -4,6 +4,7 @@ import net from 'node:net';
 import tls from 'node:tls';
 import test from 'node:test';
 import { createClient } from '../src/falkordb-client.js';
+import { createMemory } from '../src/memory.js';
 import { encodeCommand, RespParser } from '../src/resp.js';
 import { createFalkorDBStore } from '../src/store/falkordb-store.js';
 
@@ -184,6 +185,135 @@ test('FalkorDB store satisfies the complete contract against a real server', asy
     assert.equal(isolated.length, 1);
     assert.equal(isolated[0].node.props.title, 'isolated');
     assert.ok(Math.abs(isolated[0].score) < 1e-5);
+  });
+
+  await t.test('removeEdges filters types and direction, preserves nodes and isolates users', async () => {
+    for (const owner of [user, otherUser]) {
+      for (const id of ['remove-one', 'remove-two', 'remove-three']) {
+        await store.upsertNode({ user: owner, id, labels: ['Memory'], props: { title: id } });
+      }
+      for (const [from, to, type] of [
+        ['remove-one', 'remove-two', 'ABOUT'], ['remove-two', 'remove-one', 'ABOUT'],
+        ['remove-one', 'remove-one', 'ABOUT'], ['remove-one', 'remove-three', 'MENTIONED_BY'],
+        ['remove-one', 'remove-three', 'NEXT_STEP'], ['remove-three', 'remove-two', 'ABOUT'],
+      ]) {
+        await store.addEdge({ user: owner, from, to, type });
+      }
+    }
+    const beforeNodes = await store.listNodes({ user });
+    const otherEdges = await store.neighbors({ user: otherUser, id: 'remove-one', limit: 20 });
+    const removal = { user, id: 'remove-one', types: ['ABOUT'], direction: 'out' };
+    assert.equal(await store.removeEdges(removal), undefined);
+    await store.removeEdges(removal);
+    assert.deepEqual((await store.neighbors({ user, id: 'remove-one', types: ['ABOUT'], limit: 20 }))
+      .map(({ edge }) => [edge.from, edge.to]), [['remove-two', 'remove-one']]);
+    assert.equal((await store.neighbors({ user, id: 'remove-two', limit: 20 })).length, 2);
+    await store.removeEdges({ ...removal, types: ['ABOUT', 'MENTIONED_BY'], direction: 'both' });
+    assert.deepEqual((await store.neighbors({ user, id: 'remove-one', limit: 20 }))
+      .map(({ edge }) => edge.type), ['NEXT_STEP']);
+    assert.equal((await store.neighbors({ user, id: 'remove-two', limit: 20 }))[0].edge.from, 'remove-three');
+    assert.deepEqual((await store.neighbors({ user, id: 'remove-three', limit: 20 }))
+      .map(({ edge }) => edge.type).sort(), ['ABOUT', 'NEXT_STEP']);
+    for (const change of [{ types: [] }, { types: ['unknown'] }, { id: 'missing' }]) {
+      await store.removeEdges({ ...removal, ...change });
+    }
+    assert.deepEqual(await store.listNodes({ user }), beforeNodes);
+    assert.deepEqual(await store.neighbors({ user: otherUser, id: 'remove-one', limit: 20 }), otherEdges);
+  });
+
+  await t.test('remember replaces external imports and preserves session links in isolated real graphs', async () => {
+    const owner = `${user}_imports`;
+    const isolated = `${user}_imports_other`;
+    for (const name of [owner, isolated]) {
+      const graph = `memory:${name}`;
+      await inspector.query(graph, 'RETURN 1');
+      graphs.add(graph);
+    }
+    let at = createdAt;
+    const touches = [];
+    const memory = createMemory({
+      store,
+      embedder: {
+        dim: 3,
+        async embed(texts) {
+          return texts.map((text) => text.startsWith('negative') ? [-1, 0, 0] : [1, 0, 0]);
+        },
+      },
+      now: () => new Date(at),
+      onTouch: (event) => touches.push(event),
+    });
+    const firstInput = {
+      user: owner, source: 'claude', kind: 'event', title: 'positive first', text: 'old body',
+      summary: 'old summary', tags: ['old'], occurredAt: createdAt,
+      externalId: 'cc-session:first', follows: 'cc-session:missing',
+    };
+    const first = await memory.remember(firstInput);
+    assert.deepEqual(first, { id: first.id, replaced: false, followsLinked: false });
+    assert.equal((await store.listNodes({ user: owner, label: 'Memory' })).length, 1);
+    const nextInput = {
+      user: owner, source: 'claude', kind: 'fact', title: 'positive next', text: 'next body',
+      tags: ['next'], externalId: 'cc-session:next', follows: 'cc-session:first',
+    };
+    const next = await memory.remember(nextInput);
+    assert.deepEqual(next, { id: next.id, replaced: false, followsLinked: true });
+    await memory.remember({ ...firstInput, relatesTo: [next.id] });
+    const beforeNodes = await store.listNodes({ user: owner });
+    const beforeEdges = await store.neighbors({ user: owner, id: next.id, limit: 100 });
+    assert.deepEqual(await memory.remember(nextInput), {
+      id: next.id, replaced: true, followsLinked: true,
+    });
+    assert.deepEqual(await store.listNodes({ user: owner }), beforeNodes);
+    assert.deepEqual(await store.neighbors({ user: owner, id: next.id, limit: 100 }), beforeEdges);
+    const links = await store.neighbors({ user: owner, id: first.id, types: ['NEXT_STEP'], limit: 100 });
+    assert.deepEqual(links.map(({ edge }) => [edge.from, edge.to]), [[first.id, next.id]]);
+    const original = await store.neighbors({ user: owner, id: first.id, limit: 100 });
+    assert.ok(original.some(({ edge }) => edge.from === first.id && edge.type === 'SIMILAR'));
+    assert.ok(original.some(({ edge }) => edge.from === first.id && edge.type === 'RELATES_TO'));
+    const incoming = original.filter(({ edge }) => edge.to === first.id);
+    at = later;
+    const replacement = {
+      user: owner, source: 'copilot', kind: 'decision', title: 'negative replacement',
+      text: 'new body', summary: 'new summary', tags: ['new'], externalId: firstInput.externalId,
+    };
+    assert.deepEqual(await memory.remember(replacement), { id: first.id, replaced: true });
+    const node = await store.getNode({ user: owner, id: first.id });
+    assert.equal(node.props.externalId, firstInput.externalId);
+    assert.equal(node.props.text, replacement.text);
+    assert.equal(node.props.summary, replacement.summary);
+    assert.equal(node.props.kind, replacement.kind);
+    assert.equal(node.props.createdAt, later);
+    assert.equal(node.props.occurredAt ?? null, null);
+    const replacedEdges = await store.neighbors({ user: owner, id: first.id, limit: 100 });
+    assert.deepEqual(replacedEdges.filter(({ edge }) => edge.to === first.id), incoming);
+    assert.deepEqual(replacedEdges.filter(({ edge }) => edge.type === 'NEXT_STEP'), links);
+    const outgoing = replacedEdges.filter(({ edge }) => edge.from === first.id);
+    assert.deepEqual(outgoing.filter(({ edge }) => edge.type === 'ABOUT').map(({ node }) => node.props.name), ['new']);
+    assert.deepEqual(outgoing.filter(({ edge }) => edge.type === 'MENTIONED_BY').map(({ node }) => node.props.name), ['copilot']);
+    assert.ok(!outgoing.some(({ edge }) => edge.type === 'SIMILAR' || edge.type === 'RELATES_TO'));
+    const hit = (await store.vectorSearch({ user: owner, embedding: [-1, 0, 0], k: 10 }))
+      .find(({ node }) => node.id === first.id);
+    assert.ok(Math.abs(hit.score - 1) < 1e-5);
+    assert.equal((await store.listNodes({ user: owner, label: 'Memory' })).length, 2);
+    assert.ok(touches.at(-1).nodeIds.includes(first.id));
+    assert.equal(touches.at(-1).source, 'copilot');
+
+    const otherNext = await memory.remember({ ...nextInput, user: isolated });
+    assert.deepEqual(otherNext, { id: next.id, replaced: false, followsLinked: false });
+    const otherFirst = await memory.remember({ ...replacement, user: isolated, text: 'isolated body' });
+    assert.deepEqual(otherFirst, { id: first.id, replaced: false });
+    const isolatedNodes = await store.listNodes({ user: isolated });
+    await memory.remember({ ...replacement, text: 'owner changed again' });
+    assert.deepEqual(await store.listNodes({ user: isolated }), isolatedNodes);
+    assert.equal((await memory.remember({ ...nextInput, user: isolated })).followsLinked, true);
+    assert.equal((await store.neighbors({
+      user: isolated, id: next.id, types: ['NEXT_STEP'], limit: 100,
+    })).length, 1);
+    assert.deepEqual(await memory.remember({ ...nextInput, follows: undefined }), {
+      id: next.id, replaced: true,
+    });
+    assert.equal((await store.neighbors({
+      user: owner, id: next.id, types: ['NEXT_STEP'], limit: 100,
+    })).length, 1);
   });
 
   await t.test('close is idempotent and prevents subsequent operations', async () => {

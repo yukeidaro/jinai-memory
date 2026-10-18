@@ -184,6 +184,18 @@ export function createFalkorDBStore({ url }) {
       return edge(rows[0][0], rows[0][1], rows[0][2]);
     },
 
+    async removeEdges({ user, id, types, direction }) {
+      const graph = graphFor(user);
+      string(id, 'id');
+      strings(types, 'types');
+      if (direction !== 'out' && direction !== 'both') {
+        throw new TypeError('direction must be "out" or "both"');
+      }
+      await client.query(graph,
+        `MATCH (a {id: $id})-[r]${direction === 'out' ? '->' : '-'}() ` +
+        'WHERE type(r) IN $types DELETE r', { id, types });
+    },
+
     async neighbors({ user, id, types, limit }) {
       const graph = graphFor(user);
       string(id, 'id');

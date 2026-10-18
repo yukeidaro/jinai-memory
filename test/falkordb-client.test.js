@@ -487,6 +487,26 @@ function indexRows(dim = 3, similarity = 'cosine', status = 'OPERATIONAL') {
   return result(['label', 'properties', 'types', 'options', 'entitytype', 'status'], rows);
 }
 
+test('store removeEdges parameterizes ids and types and only interpolates a validated direction', async (t) => {
+  const commands = [];
+  const url = await serverFor(t, (command) => {
+    commands.push(command);
+    return [['Relationships deleted: 1']];
+  });
+  const store = createFalkorDBStore({ url });
+  t.after(() => store.close());
+  const id = '"; MATCH (n) DELETE n // $id\\';
+  const types = ['ABOUT', '"; DELETE r //'];
+  for (const direction of ['out', 'both']) {
+    assert.equal(await store.removeEdges({ user: 'unit', id, types, direction }), undefined);
+    assert.equal(commands.at(-1)[1], 'memory:unit');
+    assert.equal(commands.at(-1)[2],
+      `CYPHER id=${JSON.stringify(id)} types=${JSON.stringify(types)} ` +
+      `MATCH (a {id: $id})-[r]${direction === 'out' ? '->' : '-'}() WHERE type(r) IN $types DELETE r`);
+  }
+  assert.equal(commands.length, 2);
+});
+
 test('ensureIndexes creates cosine/vector and id indexes, waits for readiness and is idempotent', async (t) => {
   const creates = [];
   let reads = 0;
@@ -524,6 +544,9 @@ test('store surfaces backend errors, missing endpoints, incompatible indexes and
   const store = createFalkorDBStore({ url });
   t.after(() => store.close());
   await assert.rejects(store.getNode({ user: 'unit', id: 'note' }), /backend failure/);
+  await assert.rejects(store.removeEdges({
+    user: 'unit', id: 'note', types: ['ABOUT'], direction: 'out',
+  }), /backend failure/);
   await assert.rejects(store.addEdge({ user: 'unit', from: 'a', to: 'b', type: 'ABOUT' }), /endpoints/);
   await assert.rejects(store.ensureIndexes({ user: 'unit', dim: 3 }), /incompatible/);
   await assert.rejects(store.vectorSearch({ user: 'unit', embedding: [1, 0, 0], k: 1 }), /distance/);
@@ -531,7 +554,7 @@ test('store surfaces backend errors, missing endpoints, incompatible indexes and
 
 test('store rejects unsafe graph names and invalid arguments before opening a network connection', async () => {
   const store = createFalkorDBStore({ url: 'redis://127.0.0.1:1' });
-  for (const method of ['ensureIndexes', 'upsertNode', 'getNode', 'findNodes', 'listNodes', 'addEdge', 'neighbors', 'vectorSearch']) {
+  for (const method of ['ensureIndexes', 'upsertNode', 'getNode', 'findNodes', 'listNodes', 'addEdge', 'removeEdges', 'neighbors', 'vectorSearch']) {
     await assert.rejects(store[method]({ user: 'bad user' }), /Graph/);
   }
   for (const dim of [0, 4097, 1.5, '3']) await assert.rejects(store.ensureIndexes({ user: 'u', dim }), /dim/);
@@ -545,8 +568,16 @@ test('store rejects unsafe graph names and invalid arguments before opening a ne
   await assert.rejects(store.upsertNode({ user: 'u', id: 'a', labels: ['Memory'], props: { id: 'x' } }), /reserved/);
   await assert.rejects(store.upsertNode({ user: 'u', id: 'a', labels: ['Topic'], props: {}, embedding: [1] }), /Only Memory/);
   await assert.rejects(store.findNodes({ user: 'u', where: { nested: {} } }), /flat/);
+  const removal = { user: 'u', id: 'a', types: ['ABOUT'], direction: 'out' };
+  for (const change of [
+    { id: '' }, { types: undefined }, { types: 'ABOUT' }, { types: [''] }, { types: [1] },
+    { direction: undefined }, { direction: 'in' }, { direction: null }, { direction: 'out]->() DELETE n' },
+  ]) {
+    await assert.rejects(store.removeEdges({ ...removal, ...change }), TypeError);
+  }
   await store.close();
   await store.close();
   await assert.rejects(store.getNode({ user: 'u', id: 'a' }), /closed/);
   await assert.rejects(store.vectorSearch({ user: 'u', embedding: [1], k: 0 }), /closed/);
+  await assert.rejects(store.removeEdges(removal), /closed/);
 });

@@ -10,6 +10,10 @@ const DEFAULT_INSTRUCTIONS = [
   "After saving, briefly acknowledge it in your reply. Use recall only as a fallback and orient to refresh the map.",
 ].join("\n");
 const nonempty = { type: "string", minLength: 1 };
+const externalIdPattern = "^[A-Za-z0-9:_.-]{1,200}$";
+const externalReference = {
+  type: "string", minLength: 1, maxLength: 200, pattern: externalIdPattern,
+};
 const datePattern =
   "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d" +
   "(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$";
@@ -47,6 +51,14 @@ function tools(map) {
           tags: { type: "array", items: nonempty, maxItems: 10 },
           occurredAt: { type: "string", format: "date-time", pattern: datePattern },
           relatesTo: { type: "array", items: nonempty },
+          externalId: {
+            ...externalReference,
+            description: "同じ externalId なら置き換える。取り込みツール用で、会話中の AI は普通は使わない。",
+          },
+          follows: {
+            ...externalReference,
+            description: "前の記憶の externalId。取り込みツール用で、会話中の AI は普通は使わない。",
+          },
         }, ["kind", "title", "text", "summary", "tags"]),
         allOf: [{
           if: { properties: { kind: { const: "event" } }, required: ["kind"] },
@@ -113,6 +125,11 @@ function invalidArguments(name, args, inputSchema) {
     if (!KINDS.includes(args.kind)) return "Invalid memory kind.";
     if (args.tags.length > 10) return "tags must contain at most 10 items.";
     if (/[\r\n]/u.test(args.summary)) return "summary must be one line.";
+    for (const key of ["externalId", "follows"]) {
+      if (args[key] !== undefined && !new RegExp(externalIdPattern, "u").test(args[key])) {
+        return `${key} must contain 1-200 letters, digits, colons, underscores, dots or hyphens.`;
+      }
+    }
     if (args.kind === "event" && args.occurredAt === undefined) {
       return "Events require occurredAt.";
     }
