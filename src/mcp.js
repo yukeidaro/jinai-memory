@@ -2,6 +2,9 @@ import { findSecret } from "./secret-guard.js";
 
 const VERSIONS = new Set(["2025-06-18", "2025-03-26", "2024-11-05"]);
 const KINDS = ["preference", "event", "fact", "decision"];
+const MAP_TTL = 5 * 60 * 1_000;
+const MAP_WAIT = 800;
+const PREPARING_MAP = "Memory map is being prepared — call orient to get it.";
 const DEFAULT_INSTRUCTIONS = [
   "Before answering about the user's preferences, past events, plans, or people, inspect the Memory map; open the closest relevant entry once, or skip open if none.",
   "Proactively remember preferences, decisions, events (with an ISO date/time in occurredAt), and facts about the user or their world, even without a request. One fact per call.",
@@ -170,6 +173,39 @@ export function createMcpHandler({
   if (!memory || typeof getUser !== "function" || typeof instructions !== "string") {
     throw new TypeError("memory, getUser, and string instructions are required");
   }
+  const maps = new Map();
+
+  function mapFor(user) {
+    if (!maps.has(user)) {
+      maps.set(user, { map: undefined, expiresAt: 0, version: 0, pending: undefined });
+    }
+    return maps.get(user);
+  }
+
+  function refreshMap(user, source, entry) {
+    entry.source = source;
+    if (entry.pending) return entry.pending;
+    entry.pending = Promise.resolve().then(async () => {
+      for (;;) {
+        const version = entry.version;
+        try {
+          const map = await memory.orient({ user, source: entry.source });
+          if (version === entry.version) {
+            entry.map = map;
+            entry.expiresAt = Date.now() + MAP_TTL;
+          }
+        } catch {
+          console.error("Memory map refresh failed.");
+        }
+        // A write during the read needs a new map, never the pre-write snapshot.
+        if (version === entry.version) break;
+      }
+    }).finally(() => {
+      entry.pending = undefined;
+    });
+    return entry.pending;
+  }
+
   return async function handle(message, ctx = {}) {
     const hasId = object(message) && Object.hasOwn(message, "id");
     const validId = hasId && (
@@ -208,13 +244,20 @@ export function createMcpHandler({
         return rpcError(id, -32603, "Memory user is unavailable");
       }
       if (method === "tools/list") {
-        let map;
-        try {
-          map = await memory.orient({ user, source: ctx.source });
-        } catch {
-          map = "Unavailable. Call orient to retry.";
+        const entry = mapFor(user);
+        if (Date.now() >= entry.expiresAt) refreshMap(user, ctx.source, entry);
+        if (entry.map === undefined && entry.pending) {
+          let timeout;
+          try {
+            await Promise.race([
+              entry.pending,
+              new Promise((resolve) => { timeout = setTimeout(resolve, MAP_WAIT); }),
+            ]);
+          } finally {
+            clearTimeout(timeout);
+          }
         }
-        return { jsonrpc: "2.0", id, result: { tools: tools(map) } };
+        return { jsonrpc: "2.0", id, result: { tools: tools(entry.map ?? PREPARING_MAP) } };
       }
       const tool = tools("").find((entry) => entry.name === params.name);
       if (!tool) return rpcError(id, -32602, "Unknown tool");
@@ -235,6 +278,15 @@ export function createMcpHandler({
       }
       try {
         const result = await memory[tool.name]({ ...args, user, source: ctx.source });
+        if (tool.name === "remember") {
+          // Unrequested maps stay lazy so writes alone do not emit read notifications.
+          const entry = maps.get(user);
+          if (entry) {
+            entry.version += 1;
+            entry.expiresAt = 0;
+            refreshMap(user, ctx.source, entry);
+          }
+        }
         return { jsonrpc: "2.0", id, result: toolResult(result) };
       } catch {
         return { jsonrpc: "2.0", id, result: toolResult("Memory operation failed.", true) };

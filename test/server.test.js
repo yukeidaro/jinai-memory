@@ -7,6 +7,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { createEmbedder } from "../src/embedder.js";
 import { createEventHub } from "../src/events.js";
 import { createMemory } from "../src/memory.js";
@@ -85,6 +86,47 @@ test("HTTP initialize, tools/list, remember, open, recall, and orient share the 
   assert.equal(value(await call("open", { id: saved.id })).note.text, NOTE.text);
   assert.equal(value(await call("recall", { query: "夕飯" })).preferences[0].id, saved.id);
   assert.match(value(await call("orient", {})), /ハンバーグ/u);
+});
+
+test("HTTP tools/list stays below one second for a three-second map and isolates cached users", { timeout: 5_000 }, async (t) => {
+  const users = [{ user: "alice", token: randomUUID() }, { user: "bob", token: randomUUID() }];
+  const builds = [];
+  let building;
+  const { client } = await setup(t, {
+    users,
+    memory: {
+      orient({ user, source }) {
+        builds.push({ user, source });
+        if (user === "bob") return Promise.resolve("Bob's private map");
+        building = delay(3_000, "Alice's private map");
+        return building;
+      },
+    },
+  });
+  const alice = client(users[0].token);
+  const bob = client(users[1].token);
+  await Promise.all(Array.from({ length: 2 }, async () => {
+    const started = performance.now();
+    const reply = await alice.request("tools/list");
+    const elapsed = performance.now() - started;
+    assert.equal(reply.error, undefined);
+    assert.equal(reply.result.tools.length, 4);
+    assert.ok(reply.result.tools[1].description.endsWith(
+      "Memory map is being prepared — call orient to get it.",
+    ));
+    assert.ok(elapsed < 1_000, `HTTP tools/list took ${elapsed.toFixed(1)}ms`);
+    t.diagnostic(`three-second map -> HTTP tools/list: ${elapsed.toFixed(1)}ms (< 1000ms)`);
+  }));
+  const bobReply = await bob.request("tools/list");
+  assert.ok(bobReply.result.tools[1].description.endsWith("Bob's private map"));
+  assert.doesNotMatch(JSON.stringify(bobReply), /Alice's private map/u);
+  await building;
+  const aliceReply = await alice.request("tools/list", {}, "chatgpt");
+  assert.ok(aliceReply.result.tools[1].description.endsWith("Alice's private map"));
+  assert.doesNotMatch(JSON.stringify(aliceReply), /Bob's private map/u);
+  assert.deepEqual(builds, [
+    { user: "alice", source: "claude" }, { user: "bob", source: "claude" },
+  ]);
 });
 
 test("HTTP hides invalid tokens and sources and returns Allow POST for authenticated GET", async (t) => {
