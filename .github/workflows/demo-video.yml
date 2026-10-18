@@ -1,0 +1,109 @@
+name: Demo video
+
+on:
+  push:
+    branches:
+      - video/demo
+    paths:
+      - "video/**"
+      - ".github/workflows/demo-video.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: video
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install pinned video dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Install Chromium and system libraries
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify scenario and fallback logic
+        run: npm run verify
+
+      - name: Start disposable local product server
+        working-directory: .
+        run: |
+          mkdir -p video/out
+          token="$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))")"
+          echo "::add-mask::$token"
+          printf 'JINAI_TOKEN=%s\n' "$token" >> "$GITHUB_ENV"
+          printf 'JINAI_URL=http://127.0.0.1:8787\n' >> "$GITHUB_ENV"
+          env -u FALKORDB_URL -u OPENAI_API_KEY -u MEMORY_USERS \
+            MEMORY_TOKEN="$token" MEMORY_USER=video-demo PORT=8787 \
+            EMBEDDINGS_PROVIDER=fake EMBED_DIM=128 \
+            node src/server.js > video/out/server.log 2>&1 &
+          pid=$!
+          printf '%s\n' "$pid" > video/out/server.pid
+          for attempt in {1..60}; do
+            if ! kill -0 "$pid" 2>/dev/null; then
+              echo "The disposable server exited before becoming healthy."
+              cat video/out/server.log
+              exit 1
+            fi
+            if curl --fail --silent --connect-timeout 1 --max-time 2 http://127.0.0.1:8787/healthz > /dev/null; then
+              echo "Disposable server is healthy."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Timed out waiting for the local server."
+          cat video/out/server.log
+          exit 1
+
+      - name: Record the real product UI
+        id: capture
+        continue-on-error: true
+        run: npm run capture
+
+      - name: Report capture fallback
+        if: steps.capture.outcome == 'failure'
+        run: echo "::warning::UI capture failed. Missing scenes will be labeled RECORDING UNAVAILABLE; inspect the capture stage before submitting."
+
+      - name: Render silent 1080p MP4
+        run: npm run render
+
+      - name: Render eight scene stills
+        run: npm run stills
+
+      - name: Probe and enforce output format
+        run: npm run inspect
+
+      - name: Upload video, stills and raw recordings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jinai-memory-demo-${{ github.run_number }}
+          path: |
+            video/out/
+            video/public/ui-*.webm
+            video/public/ui-timing.json
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Stop only the server started by this job
+        if: always()
+        run: |
+          if [ -f out/server.pid ]; then
+            pid="$(cat out/server.pid)"
+            if kill -0 "$pid" 2>/dev/null; then
+              kill "$pid"
+            fi
+          fi
