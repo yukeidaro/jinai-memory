@@ -31,7 +31,7 @@ export const RECORDINGS = [
     id: "claude",
     file: "05-claude.mp4",
     label: "Scene 5 \u2014 Claude (recording pending)",
-    caption: "Switch to Claude. Your memory comes with you.",
+    caption: "Switch to Claude. It already knows tonight's dinner.",
   },
 ];
 
