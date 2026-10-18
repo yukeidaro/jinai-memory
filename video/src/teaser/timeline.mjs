@@ -3,6 +3,10 @@ export const WIDTH = 1920;
 export const HEIGHT = 1080;
 export const DURATION = 1650;
 export const HOLD_FROM = 1560;
+export const REPOSITORY_FROM = 1480;
+export const REPOSITORY_CHARS_PER_FRAME = 2;
+export const WINDOW_HEIGHT = 660;
+export const CAPTION_TOP = 836;
 
 export const ACTS = [
   { id: "import", from: 0, to: 360 },
@@ -20,7 +24,7 @@ export const COPY = {
   acknowledgment: "Nice! Noted in Jin AI Memory:",
   answerBefore: "You just had burgers ",
   answerEmphasis: "yesterday",
-  answerAfter: " - how about grilled salmon tonight?",
+  answerAfter: " \u2014 how about grilled salmon tomorrow?",
   repository: "github.com/yukeidaro/jinai-memory",
   query: "CALL db.idx.vector.queryNodes($label, $attribute, $candidates, vecf32($embedding)) YIELD node, score",
 };
@@ -39,22 +43,46 @@ export const WRITE_ROWS = [
 ];
 
 export const ENGINE_ROWS = [
-  { text: "Write: vector index wires related notes (SIMILAR edges)", from: 1140 },
-  { text: "Read: follow edges - no search every turn", from: 1200 },
-  { text: "Entry map \u2264 400 tokens, even at 2,000 notes", from: 1260 },
+  { text: "Write: a vector index wires related notes (SIMILAR edges)", from: 1140 },
+  { text: "Read: follow edges \u2014 no search every turn", from: 1170 },
+  { text: "Entry map \u2264 400 tokens, even at 2,000 notes", from: 1200 },
+  { text: "One isolated graph per user", from: 1230 },
 ];
+
+// Fixed label backplates are drawn after every graph point and read particle.
+export const GRAPH_LABELS = [
+  { id: "import-0", text: "skills", x: 32, y: 52, width: 108, from: 214 },
+  { id: "import-41", text: "sessions", x: 340, y: 52, width: 156, from: 278 },
+  { id: "import-9", text: "CLAUDE.md", x: 32, y: 524, width: 196, from: 228 },
+  { id: "import-24", text: "memory", x: 340, y: 524, width: 150, from: 252, to: 505 },
+  { id: "burgers", text: "burgers", x: 390, y: 176, width: 146, from: 485 },
+  { id: "dinner", text: "Oct 17 dinner", x: 295, y: 474, width: 244, from: 520 },
+  { id: "reader", text: "Claude", x: 32, y: 280, width: 130, from: 800, to: 1110 },
+];
+export const graphLabelsAt = (frame) => GRAPH_LABELS.filter(
+  (label) => frame >= label.from && frame < (label.to ?? 1470),
+);
 
 export const CAPTIONS = [
   { id: "bring", from: 22, to: 170, lines: ["Bring the AI memory you already have."] },
   {
-    id: "one-command", from: 170, to: 360,
-    lines: ["Skills, memory files, CLAUDE.md and past Claude Code sessions", "- one command."],
+    id: "one-command", from: 170, to: 260,
+    lines: ["Skills, memory files and CLAUDE.md \u2014 one command."],
   },
   {
-    id: "automatic", from: 560, to: 720,
-    lines: ["ChatGPT decides what's worth remembering.", "You never said 'save'."],
+    id: "sessions", from: 260, to: 360,
+    lines: ["Bring past Claude Code sessions, too."],
   },
-  { id: "next-day", from: 720, to: 840, lines: ["The next day - a different AI."] },
+  {
+    id: "automatic", from: 420, to: 560,
+    lines: ["ChatGPT decides what\u2019s worth remembering."],
+  },
+  { id: "no-save", from: 560, to: 720, lines: ["You never said \u201csave\u201d."] },
+  { id: "next-day", from: 720, to: 840, lines: ["The next day \u2014 a different AI."] },
+  {
+    id: "shared-read", from: 840, to: 1000,
+    lines: ["Claude opens the shared memory on its own."],
+  },
   { id: "whole-memory", from: 1140, to: 1290, lines: ["FalkorDB is the whole memory."] },
   { id: "isolated", from: 1290, to: 1440, lines: ["Each user gets an isolated graph."] },
 ];
@@ -71,15 +99,27 @@ export const READABLES = [
   },
   { id: "read-by-claude", from: 1000, to: 1036 },
   { id: "read-by-mcp", from: 1051, to: 1110 },
+  ...ENGINE_ROWS.map((row, index) => ({
+    id: `engine-${index}`, from: row.from + repeatDuration(index), to: 1440,
+  })),
+  {
+    id: "repository",
+    from: REPOSITORY_FROM + Math.ceil(COPY.repository.length / REPOSITORY_CHARS_PER_FRAME),
+    to: DURATION,
+  },
   { id: "tagline", from: 1540, to: DURATION },
 ];
 
 export const clamp01 = (value) => Math.max(0, Math.min(1, value));
 export const progress = (frame, from, duration) => clamp01((frame - from) / duration);
 export const mix = (from, to, amount) => from + (to - from) * amount;
-export const repeatDuration = (index) => index < 2 ? 15 : 8;
-export const typedCount = (frame, from, text) => Math.min(text.length, Math.max(0, Math.floor(frame - from)));
-export const typedText = (frame, from, text) => text.slice(0, typedCount(frame, from, text));
+export function repeatDuration(index) {
+  return index < 2 ? 15 : 8;
+}
+export const typedCount = (frame, from, text, charsPerFrame = 1) =>
+  Math.min(text.length, Math.max(0, Math.floor((frame - from) * charsPerFrame)));
+export const typedText = (frame, from, text, charsPerFrame = 1) =>
+  text.slice(0, typedCount(frame, from, text, charsPerFrame));
 
 export function actAt(frame) {
   return ACTS.find((act) => frame >= act.from && frame < act.to)?.id ?? null;
@@ -106,7 +146,7 @@ export function frameState(frame) {
     scan: progress(live, 60, 90),
     confirm: typedCount(live, 150, COPY.confirm),
     enter: progress(live, 158, 12),
-    import: progress(live, 170, 130),
+    import: progress(live, 170, 100),
     graphDrift: Math.sin(live / 23),
     dim: progress(live, 300, 6),
     terminalTurn: progress(live, 360, 12),
@@ -120,7 +160,7 @@ export function frameState(frame) {
     expand: progress(live, 1122, 18),
     collapse: progress(live, 1440, 30),
     morph: progress(live, 1470, 10),
-    repository: typedCount(live, 1480, COPY.repository),
+    repository: typedCount(live, REPOSITORY_FROM, COPY.repository, REPOSITORY_CHARS_PER_FRAME),
     brand: progress(live, 1480, 60),
     tagline: progress(live, 1540, 20),
   };
@@ -136,7 +176,7 @@ export function motionAt(frame) {
   else if (frame < 60) primary = ["command", "cursor"];
   else if (frame < 150) primary = ["scan"];
   else if (frame < 170) primary = ["confirm", "enter"];
-  else if (frame < 300) primary = ["import"];
+  else if (frame < 270) primary = ["import"];
   else if (frame < 360) primary = ["dim", "graphDrift"];
   else if (frame < 372) primary = ["terminalTurn"];
   else if (frame < 440) primary = ["chatTyping", "cursor"];

@@ -1,7 +1,8 @@
 import React from "react";
 import { AbsoluteFill, Easing, interpolate, spring } from "remotion";
 import {
-  COPY, FPS, HOLD_FROM, clamp01, frameState, mix, progress, repeatDuration, typedText,
+  COPY, FPS, HOLD_FROM, REPOSITORY_CHARS_PER_FRAME, REPOSITORY_FROM, WINDOW_HEIGHT,
+  clamp01, frameState, graphLabelsAt, mix, progress, repeatDuration, typedText,
 } from "./timeline.mjs";
 
 export const COLORS = {
@@ -38,9 +39,8 @@ export function springAt(frame, from, duration = 15) {
 
 export function Starfield({ frame }) {
   const live = Math.min(frame, HOLD_FROM);
-  const vanish = 1 - progress(live, 1470, 10);
   return (
-    <AbsoluteFill style={{ opacity: 0.25 * vanish, overflow: "hidden" }}>
+    <AbsoluteFill style={{ opacity: 0.4, overflow: "hidden" }}>
       <svg width="1920" height="1080" style={{ position: "absolute" }}>
         {Array.from({ length: 190 }, (_, index) => {
           const x = ((index * 137.51 + live * 0.12) % 1980) - 30;
@@ -120,7 +120,10 @@ export function Morph({ frame, baseSize = 64 }) {
         fontFamily: SANS, fontSize: mix(30, 25, amount), fontWeight: 800,
       }}>J</span>
       {frame >= 1480 && (
-        <Typing frame={frame} from={1480} text={COPY.repository} fontSize={22} cursorUntil={1540} />
+        <Typing
+          frame={frame} from={REPOSITORY_FROM} text={COPY.repository}
+          charsPerFrame={REPOSITORY_CHARS_PER_FRAME} fontSize={22} cursorUntil={1540}
+        />
       )}
     </div>
   );
@@ -173,6 +176,7 @@ export function Window({ frame, children }) {
   const state = frameState(frame);
   const spawn = springAt(frame, 12, 9);
   const minimize = progress(frame, 1110, 12);
+  const height = WINDOW_HEIGHT + 100 * progress(frame, 975, 25);
   const id = frame < 366 ? "terminal" : frame < 726 ? "chatgpt" : "claude";
   const identity = AI[id];
   const turn = frame >= 360 && frame < 372 ? state.terminalTurn
@@ -182,10 +186,10 @@ export function Window({ frame, children }) {
   const y = mix((DOCK_Y - 480) * (1 - spawn), DOCK_Y - 480, minimize);
   return (
     <div style={{
-      position: "absolute", left: 320, top: 100, width: 1280, height: 760,
+      position: "absolute", left: 320, top: 100, width: 1280, height,
       borderRadius: 16, overflow: "hidden", background: COLORS.window,
       border: "1px solid #E6E8EE24", boxShadow: "0 35px 120px #00000080",
-      transform: `translate(${x}px, ${y}px) scale(${spawn * mix(1, 56 / 1280, minimize)}, ${spawn * mix(1, 56 / 760, minimize)})`,
+      transform: `translate(${x}px, ${y}px) scale(${spawn * mix(1, 56 / 1280, minimize)}, ${spawn * mix(1, 56 / height, minimize)})`,
     }}>
       <div style={{
         height: 82, display: "flex", alignItems: "center", padding: "0 30px",
@@ -202,7 +206,7 @@ export function Window({ frame, children }) {
           }}>{identity.letter}</span>
           <span style={{ fontSize: 28, fontWeight: 650 }}>{identity.title}</span>
         </div>
-        <span style={{ marginLeft: "auto", fontSize: 28, color: COLORS.muted }}>Jin AI Memory</span>
+        <span style={{ marginLeft: "auto", fontSize: 28, color: COLORS.muted }}>connected: Jin AI Memory</span>
       </div>
       <div style={{ position: "absolute", inset: "82px 0 0", transform: `scaleY(${fold})`, transformOrigin: "50% 0" }}>
         {children}
@@ -212,10 +216,10 @@ export function Window({ frame, children }) {
 }
 
 export function Typing({
-  frame, from, text, fontSize = 28, cursorUntil = Infinity, cursor = true, style,
+  frame, from, text, charsPerFrame = 1, fontSize = 28, cursorUntil = Infinity, cursor = true, style,
 }) {
   const state = frameState(frame);
-  const visible = typedText(state.frame, from, text);
+  const visible = typedText(state.frame, from, text, charsPerFrame);
   return (
     <span style={{ fontFamily: MONO, fontSize, lineHeight: 1.55, overflowWrap: "anywhere", ...style }}>
       {visible}
@@ -238,7 +242,9 @@ export function Cascade({ frame, from = 0, rows, color = COLORS.amber, style, ro
         const amount = springAt(frame, start, repeatDuration(index));
         return (
           <div key={row.label ?? row.text} style={{
-            display: "flex", alignItems: "center", gap: 14, minHeight: 40,
+            display: row.text ? "flex" : "grid",
+            gridTemplateColumns: row.text ? undefined : `minmax(0, 1fr) max-content${check ? " 28px" : ""}`,
+            alignItems: "center", gap: 14, minHeight: 40,
             transform: `translateY(${(1 - amount) * 22}px) scaleY(${Math.max(0, amount)})`,
             transformOrigin: "50% 0", fontSize: 28, lineHeight: 1.45,
             ...rowStyle,
@@ -246,10 +252,10 @@ export function Cascade({ frame, from = 0, rows, color = COLORS.amber, style, ro
             {row.text ? <span>{row.text}</span> : (
               <>
                 <span style={{ color: COLORS.muted }}>{row.label}</span>
-                <span style={{ marginLeft: "auto", textAlign: "right" }}>{row.value}</span>
+                <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.value}</span>
               </>
             )}
-            {check && <span style={{ color, marginLeft: "auto", fontSize: 28 }}>{"\u2713"}</span>}
+            {check && <span style={{ color, marginLeft: row.text ? "auto" : 0, textAlign: "right", fontSize: 28 }}>{"\u2713"}</span>}
           </div>
         );
       })}
@@ -290,14 +296,13 @@ const GRAPH_NODES = Array.from({ length: 54 }, (_, index) => {
     id: `import-${index}`,
     x: 287 + Math.cos(angle) * radius,
     y: 272 + Math.sin(angle) * radius,
-    label: ({ 0: "skills", 9: "CLAUDE.md", 24: "memory", 41: "sessions" })[index] ?? "",
     from: 170 + index * 1.55,
     color: COLORS.amber,
   };
 });
 const EXTRA_NODES = [
-  { id: "burgers", x: 386, y: 208, label: "burgers", from: 470, color: COLORS.teal },
-  { id: "dinner", x: 345, y: 400, label: "Oct 17 dinner", from: 505, color: COLORS.teal },
+  { id: "burgers", x: 386, y: 208, from: 470, color: COLORS.teal },
+  { id: "dinner", x: 345, y: 400, from: 505, color: COLORS.teal },
 ];
 const ALL_NODES = [...GRAPH_NODES, ...EXTRA_NODES];
 const GRAPH_EDGES = GRAPH_NODES.slice(1).map((node, index) => ({
@@ -321,18 +326,18 @@ function graphPoint(node, frame) {
 }
 
 export function MiniGraph({ frame, highlight = [], travel = null }) {
-  if (frame < 170 || frame >= 1470) return null;
+  if (frame < 12 || frame >= 1470) return null;
   const state = frameState(frame);
   const expanded = state.expand;
   const collapse = state.collapse;
   const width = mix(mix(575, 1660, expanded), 1, collapse);
-  const height = mix(mix(590, 650, expanded), 1, collapse);
+  const height = mix(mix(480, 650, expanded), 1, collapse);
   const left = mix(mix(985, 130, expanded), 960, collapse);
-  const top = mix(mix(212, 140, expanded), 600, collapse);
+  const top = mix(mix(254, 140, expanded), 600, collapse);
   const points = Object.fromEntries(ALL_NODES.map((node) => [node.id, graphPoint(node, frame)]));
-  const full = expanded > 0;
   const viewWidth = mix(600, 1500, expanded);
   const read = state.read;
+  const labels = graphLabelsAt(frame);
   return (
     <div style={{ position: "absolute", left, top, width, height, overflow: "hidden", borderRadius: 16 }}>
       <svg width="100%" height="100%" viewBox={`0 0 ${viewWidth} 560`} preserveAspectRatio="xMidYMid meet">
@@ -343,6 +348,13 @@ export function MiniGraph({ frame, highlight = [], travel = null }) {
           </radialGradient>
         </defs>
         <circle cx="290" cy="275" r="265" fill="url(#teaser-halo)" />
+        {frame < 214 && (
+          <g opacity={0.2 * (1 - progress(frame, 170, 44))}>
+            {GRAPH_NODES.map((node) => (
+              <circle key={`preview-${node.id}`} cx={node.x} cy={node.y} r="4.5" fill={COLORS.amber} />
+            ))}
+          </g>
+        )}
         {GRAPH_EDGES.map((edge) => {
           const a = points[edge.from];
           const b = points[edge.to];
@@ -365,13 +377,6 @@ export function MiniGraph({ frame, highlight = [], travel = null }) {
             <g key={node.id}>
               <circle cx={point.x} cy={point.y} r={(lit ? 24 : 14) * pulse} fill={node.color} opacity={lit ? 0.15 : 0.06} />
               <circle cx={point.x} cy={point.y} r={node.color === COLORS.teal ? 7 : 4.5} fill={node.color} />
-              {node.label && point.arrival > 0.96 && (
-                <text
-                  x={point.x + 13} y={point.y - 15} fill={lit ? COLORS.text : node.color}
-                  fontSize={full ? 29 : 30} fontFamily={SANS} fontWeight="600"
-                  stroke={COLORS.window} strokeWidth="5" paintOrder="stroke"
-                >{node.label}</text>
-              )}
             </g>
           );
         })}
@@ -384,13 +389,11 @@ export function MiniGraph({ frame, highlight = [], travel = null }) {
               {frame >= 840 && (
                 <circle cx={mix(a.x, b.x, state.photon)} cy={mix(a.y, b.y, state.photon)} r="6" fill={COLORS.white} />
               )}
-              <text x={a.x - 24} y={a.y + 38} fontSize="30" fontFamily={SANS} fill={COLORS.amber}>Claude</text>
             </g>
           );
         })()}
         {frame >= 1140 && (
           <g>
-            <text x="50" y="520" fill={COLORS.muted} fontFamily={MONO} fontSize="28">{"memory:<user>"}</text>
             {GRAPH_EDGES.slice(2, 3).map((edge) => {
               const a = points[edge.from];
               const b = points[edge.to];
@@ -398,6 +401,19 @@ export function MiniGraph({ frame, highlight = [], travel = null }) {
             })}
           </g>
         )}
+        {labels.map((label) => (
+          <g key={`label-${label.id}`}>
+            <rect
+              x={label.x - 8} y={label.y - 30} width={label.width} height="42" rx="6"
+              fill={expanded > 0 ? COLORS.background : COLORS.window}
+            />
+            <text
+              x={label.x} y={label.y} fontSize="28" fontFamily={SANS} fontWeight="600"
+              fill={highlight.includes(label.id) ? COLORS.text
+                : label.id === "burgers" || label.id === "dinner" ? COLORS.teal : COLORS.amber}
+            >{label.text}</text>
+          </g>
+        ))}
       </svg>
     </div>
   );

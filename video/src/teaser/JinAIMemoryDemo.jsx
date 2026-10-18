@@ -1,7 +1,7 @@
 import React from "react";
 import { AbsoluteFill, useCurrentFrame } from "remotion";
 import {
-  CAPTIONS, COPY, ENGINE_ROWS, IMPORT_ROWS, WRITE_ROWS,
+  CAPTIONS, CAPTION_TOP, COPY, ENGINE_ROWS, IMPORT_ROWS, WRITE_ROWS,
   frameState, progress,
 } from "./timeline.mjs";
 import {
@@ -133,7 +133,7 @@ function Captions({ frame }) {
   if (!caption) return null;
   return (
     <div style={{
-      position: "absolute", top: caption.lines.length > 1 ? 866 : 886,
+      position: "absolute", top: CAPTION_TOP, whiteSpace: "nowrap",
       left: 70, width: 1780, textAlign: "center",
       fontSize: 40, fontWeight: 550, lineHeight: 1.18, color: COLORS.white,
       textShadow: `0 2px 20px ${COLORS.background}`,
@@ -150,21 +150,21 @@ function Engine({ frame }) {
     <AbsoluteFill style={{
       transform: `scale(${1 - collapse})`, transformOrigin: "960px 600px",
     }}>
-      <div style={{ position: "absolute", left: 760, top: 200, width: 980 }}>
+      <div style={{ position: "absolute", left: 790, top: 200, width: 960 }}>
         <div style={{ fontSize: 42, fontWeight: 700, marginBottom: 26 }}>Powered by FalkorDB</div>
         <Cascade
           frame={frame} rows={ENGINE_ROWS} color={COLORS.teal}
-          style={{ gap: 18 }}
+          style={{ gap: 14 }}
           rowStyle={{
-            fontSize: 30, padding: "19px 23px", minHeight: 95,
+            fontSize: 28, padding: "14px 20px", minHeight: 88,
             boxSizing: "border-box", borderRadius: 14,
             background: COLORS.window, border: "1px solid #E6E8EE20",
           }}
         />
       </div>
       <div style={{
-        position: "absolute", left: 166, top: 734, width: 1588,
-        borderTop: "1px solid #E6E8EE20", paddingTop: 20,
+        position: "absolute", left: 166, top: 710, width: 1588,
+        borderTop: "1px solid #E6E8EE20", paddingTop: 16,
         color: COLORS.teal, fontFamily: MONO, fontSize: 28, lineHeight: 1.5,
         whiteSpace: "pre-wrap", overflowWrap: "anywhere",
       }}>
@@ -211,10 +211,6 @@ export function JinAIMemoryDemo() {
         fontSize: 28, letterSpacing: 1.5, fontWeight: 650,
         transform: `scale(${1 - state.collapse})`, transformOrigin: "0 50%",
       }}>Jin AI Memory</div>
-      <div style={{
-        position: "absolute", right: 145, top: 44, fontSize: 28, color: COLORS.muted,
-        transform: `scale(${1 - state.collapse})`, transformOrigin: "100% 50%",
-      }}>Illustrated demo</div>
       <Window frame={frame}>
         {page === "terminal" ? <Terminal frame={frame} />
           : page === "chatgpt" ? <ChatGPT frame={frame} /> : <Claude frame={frame} />}
@@ -229,7 +225,7 @@ export function JinAIMemoryDemo() {
           transform: `scale(${1 - state.minimize})`, transformOrigin: "50% 50%",
         }}>
           <Chip color={frame < 366 || frame >= 726 ? COLORS.amber : COLORS.teal}>
-            {frame < 366 ? `${frame < 300 ? Math.round(state.import * 114) : 114} memories` : "Shared memory"}
+            {frame < 366 ? `${Math.round(state.import * 114)} memories` : "Shared memory"}
           </Chip>
         </div>
       )}
