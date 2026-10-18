@@ -180,8 +180,9 @@ npx github:yukeidaro/jinai-memory init --server https://<host>
 > is invite-only: it serves the demo and the author's own memory, and unknown tokens get
 > `404`. To try the full flow, [deploy your own](docs/DEPLOY.md) (Render Blueprint plus a
 > free FalkorDB Cloud instance), pick your own token in `MEMORY_USERS`, and pass your host
-> with `--server`. `init` does not yet check the token against the server, so a wrong
-> token or host still writes a config that will return `404`; run `remove` and try again.
+> with `--server` or `JINAI_MEMORY_URL`; there is no default server.
+> `init` checks the token against the server before writing anything or copying a URL.
+> A failed check stops without changing files or the clipboard.
 > Without a server, the [live preview](https://jinai-memory.onrender.com/?mock=1) shows the UI on sample data.
 
 It detects Claude Code, Cursor, VS Code, Copilot CLI, Codex and Gemini CLI and adds the
@@ -190,7 +191,11 @@ For claude.ai and ChatGPT it shows where to paste the connector URL; `--copy cla
 puts that URL on your clipboard without printing it. Tokens are never taken as arguments
 or printed, but the written config files contain the token-bearing URL, so keep them private.
 `npx github:yukeidaro/jinai-memory remove` undoes only what `init` added.
-Add `--dry-run` to preview without writing.
+Use HTTPS for hosted servers. HTTP is allowed only for `localhost`, `127.0.0.1`
+or `[::1]`, for example `init --server http://localhost:8787`.
+The check makes one MCP `tools/list` request and times out after 90 seconds.
+Add `--dry-run` to preview without writing, copying, or contacting the server;
+it reports `Token not verified (dry run).`
 
 To connect a client by hand:
 
@@ -234,7 +239,7 @@ The backend uses Node.js built-ins, including a RESP2 client for `GRAPH.QUERY`.
 
 ## Tests
 
-Run `node --test`. The no-database run reports **248 tests: 247 pass, 1 skipped**.
+Run `node --test`. The no-database run reports **323 tests: 322 pass, 1 skipped**.
 Coverage includes imports, cross-client dinner recall, user isolation, secret
 rejection, session replacement/linking, HTTP/SSE and response budgets.
 The real-FalkorDB suite is opt-in with `FALKORDB_URL`; use a disposable test
