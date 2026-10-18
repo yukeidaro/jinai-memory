@@ -341,6 +341,92 @@ anything to this repository or other AI tools. The server's configured embedding
 provider still applies (OpenAI embeddings send note data to OpenAI; `fake` does
 not).
 
+## Import your Claude Code sessions
+
+This separate, dependency-free importer reads `~/.claude/projects/**/*.jsonl`
+**locally, one line at a time**. Each session becomes one short dated event:
+title, date, project folder name, branch, the first three human requests (up to
+200 characters each), up to 20 edited/written files, 10 skills or agents, five
+GitHub PR URLs, and message/tool counts and elapsed minutes. File paths are
+project-relative, or just a filename outside the project; absolute machine
+paths are removed. Shared project, filename and skill tags connect sessions.
+AI answer bodies, thinking, tool results, images, attachments, file-history
+snapshots and injected command/system blocks are not imported. Sessions without
+human requests or a usable date are skipped. Malformed lines and unknown record
+types are ignored. The local secret guard drops matching individual items,
+including matches beyond the retained request length; it is heuristic, not a
+guarantee that an item is safe or non-confidential.
+
+First review the **metadata-only dry run**, which makes no network requests and
+does not write state. It shows status, date, project, title (at most 60
+characters), file count and dropped-secret count, never request bodies:
+
+```powershell
+node .\scripts\import-transcripts.mjs
+# Safe, fictional examples checked into this repository:
+node .\scripts\import-transcripts.mjs --root .\test\fixtures\transcripts
+```
+
+Only after review, set your own trusted server URL and supply its token
+privately through `JINAI_MEMORY_TOKEN`, then explicitly enable sending:
+
+```powershell
+$env:JINAI_MEMORY_URL = "http://localhost:8787"
+# For the local server you started yourself in Quick start:
+$env:JINAI_MEMORY_TOKEN = $env:MEMORY_TOKEN
+node .\scripts\import-transcripts.mjs --yes
+```
+
+There is **no token argument**. `--server` overrides `JINAI_MEMORY_URL`; the MCP
+source is always `claude-code`. Imports enter **only the graph authorized by your
+token on the selected server**, never this repository or another user's graph.
+Anyone sharing the token can access that graph. The selected server's embedding
+provider applies: OpenAI embeddings send the extracted note to OpenAI; `fake`
+does not. Review confidentiality as well as detected secrets before sending.
+Never commit personal transcripts, extracted notes, tokens or state to this
+repository; all checked-in transcript fixtures are fictional.
+
+Project directories containing `scratch-workspaces` are always excluded.
+Repeat `--exclude-project <name>` to exclude more project/folder names (matching
+is case-insensitive). `--root <directory>` selects another transcript tree,
+`--since YYYY-MM-DD` selects sessions starting on/after that UTC date,
+`--limit N` takes the oldest N eligible sessions, and `--session <sessionId>`
+selects one session. For example:
+
+```powershell
+node .\scripts\import-transcripts.mjs --exclude-project client-work --exclude-project private --since 2026-10-01 --limit 10
+```
+
+The default mode requires a server with **T16 `externalId`/`follows` support**
+and the `{ id, replaced, followsLinked }` remember result. It sends sessions
+sequentially in time order using `cc-session:<sessionId>`: changed sessions are
+replaced rather than appended, and `follows` creates `NEXT_STEP` from the previous
+successfully imported session in the same project. A failed write does not
+become a predecessor. Unchanged sessions are not sent; inserting an older session
+also refreshes the following session's link. `--no-external-id` explicitly
+enables a legacy server: changed sessions append and there are no `NEXT_STEP`
+links. Do not use that mode when replacement is required.
+
+Only confirmed successes update `~/.jinai-memory/transcript-state.json`
+(override with `--state <file>`). State contains session IDs, file modification
+time/size, payload hashes and opaque project identity, not transcript bodies or
+absolute project paths. Keep it outside this repository, and use separate state
+files for different roots, servers and tokens. State is bookkeeping, not a
+server backup: deleting it or restarting an in-memory server requires deliberate
+reconciliation. Network errors are reported without tokens or server error
+bodies, and remaining sessions continue; a state-write failure stops the import.
+
+**Next step, optional:** after reviewing and testing manual imports, register a
+Claude Code `SessionEnd` command hook yourself in your private
+`~/.claude/settings.json` under
+`hooks.SessionEnd = [{ "hooks": [{ "type": "command", "command": "<your wrapper command>" }] }]`.
+Your wrapper should parse the hook's JSON stdin, take `session_id`, and invoke
+`node <absolute-path-to-import-transcripts.mjs> --session <session_id> --yes`
+with the private environment and external state path above; quote paths and pass
+the session ID as a separate argument, not shell-interpolated text. Start without
+`--yes` while checking hook behavior. This importer never edits your hook or
+configuration files.
+
 ## MCP tools
 
 | Tool | Input | Result / behavior |

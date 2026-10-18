@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-10-18T09:00:00Z","sessionId":"kiln-empty","cwd":"/home/fictional/kiln","message":{"content":[{"type":"tool_result","content":"FICTIONAL_TOOL_RESULT_ONLY"}]}}
+{"type":"user","timestamp":"2026-10-18T09:01:00Z","message":{"content":"<command-name>/clear</command-name><local-command-stdout>Automatic output.</local-command-stdout>"}}
