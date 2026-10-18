@@ -4,8 +4,26 @@
   "description": "One graph memory shared across AI tools, stored in FalkorDB, exposed over MCP, visible as a 3D graph.",
   "type": "module",
   "license": "AGPL-3.0-only",
+  "author": "Jin AI (jinai.md)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yukeidaro/jinai-memory.git"
+  },
+  "homepage": "https://jinai-memory.onrender.com",
   "private": false,
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "jinai-memory": "bin/jinai-memory.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test"
