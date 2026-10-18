@@ -70,8 +70,8 @@ export function Demo({ clips = {} }) {
         title="Claude opens ChatGPT's dinner memories"
         read
         captions={[{ from: 0, seconds: duration / FPS, lines: [
-          "You can see which memory it opened - written by ChatGPT, the day before.",
-          "Amber particles = Claude reading. Teal nodes = ChatGPT's memories.",
+          "Claude read the dinner memories that ChatGPT wrote the day before.",
+          "Teal = written by ChatGPT. Amber = written by Claude.",
         ] }]}
       />
     ),
@@ -79,9 +79,9 @@ export function Demo({ clips = {} }) {
       <GraphScene
         duration={duration}
         clip={clips.group}
-        title="Group by AI in 2D"
+        title="Four authors, one graph"
         captions={[{ from: 0, seconds: duration / FPS, lines: [
-          "Group by AI: four authors, four clusters, one shared 2D graph.",
+          "Every note is colored by the AI that wrote it: four authors, one shared graph.",
         ] }]}
       />
     ),
