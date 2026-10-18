@@ -10,6 +10,8 @@
     "capture": "node capture/capture.mjs",
     "render": "node render.mjs render",
     "stills": "node render.mjs stills",
+    "render:teaser": "node render-teaser.mjs render",
+    "stills:teaser": "node render-teaser.mjs stills",
     "inspect": "node render.mjs inspect",
     "verify": "node verify.mjs"
   },
