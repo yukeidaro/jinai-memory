@@ -3,7 +3,7 @@
 One memory for every AI you use. Bring what you already have, share it between ChatGPT and Claude, and see exactly what each AI used.
 
 **Bring the memory you already have**: one command turns your Claude Code skills, memory files, CLAUDE.md sections and past sessions into linked notes.<br>
-**Share it across AIs**: ChatGPT, Claude and other MCP clients read and write the same graph, stored in FalkorDB.<br>
+**Share it across AIs**: ChatGPT, Claude and other MCP clients read and write the same graph, stored in FalkorDB. [One command](#connect-your-ai) connects the AI tools on your machine.<br>
 **See it**: a live 2D/3D map colors each note by the AI that wrote it and lights up the notes an AI just read or wrote.
 
 <img src="docs/images/demo-claude-reads.png" alt="Illustrated dinner handoff: Claude opens shared memory containing a meal saved by ChatGPT." width="640">
@@ -168,6 +168,23 @@ Cloud GCP us-central1: `remember` **0.5-0.9 s**, `recall` **0.35 s**, `orient`
 *Demo-video still with fictional data; token bounds above use the test estimator.*
 
 ## Connect your AI
+
+**One command connects every AI tool on your machine:**
+
+```powershell
+$env:JINAI_MEMORY_TOKEN = "<token>"   # or leave it unset and type it at the hidden prompt
+npx github:yukeidaro/jinai-memory init --server https://<host>
+```
+
+It detects Claude Code, Cursor, VS Code, Copilot CLI, Codex and Gemini CLI and adds the
+memory server to each one's MCP config (with a backup beside each changed file).
+For claude.ai and ChatGPT it shows where to paste the connector URL; `--copy claude`
+puts that URL on your clipboard without printing it. Tokens are never taken as arguments
+or printed, but the written config files contain the token-bearing URL, so keep them private.
+`npx github:yukeidaro/jinai-memory remove` undoes only what `init` added.
+Add `--dry-run` to preview without writing.
+
+To connect a client by hand:
 
 Cloud connectors need a reachable HTTPS deployment, not your PC's `localhost`.
 Use your own host and replace `<encoded-token>` with **only the URL-encoded token**:
