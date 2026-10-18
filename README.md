@@ -1,24 +1,24 @@
-# Jin AI Memory
+# 🧠 Jin AI Memory
 
 One memory for every AI you use. Bring what you already have, share it between ChatGPT and Claude, and see exactly what each AI used.
 
-**Bring the memory you already have**: one command turns your Claude Code skills, memory files, CLAUDE.md sections and past sessions into linked notes.<br>
-**Share it across AIs**: ChatGPT, Claude and other MCP clients read and write the same graph, stored in FalkorDB. [One command](#connect-your-ai) connects the AI tools on your machine to your own memory server.<br>
-**See it**: a live 2D/3D map colors each note by the AI that wrote it and lights up the notes an AI just read or wrote.
+📥 **Bring the memory you already have**: one command turns your Claude Code skills, memory files, CLAUDE.md sections and past sessions into linked notes.<br>
+🤝 **Share it across AIs**: ChatGPT, Claude and other MCP clients read and write the same graph, stored in FalkorDB. [One command](#connect-your-ai) connects the AI tools on your machine to your own memory server.<br>
+✨ **See it**: a live 2D/3D map colors each note by the AI that wrote it and lights up the notes an AI just read or wrote.
 
-**Want to use it with your own AIs?** Please **star this repository**. It tells us people want it, and starring is the easiest way to follow the public sign-up.
+> ⭐ **Like it? Please star this repo!** It tells us people want this, and it's the easiest way to hear when public sign-up opens. Thank you! 🙏
 
 <img src="docs/images/real-claude-recalls.jpg" alt="Real screen: Claude answers 'Tonight's dinner is the Garlic Lemon Chicken Power Bowl' from the shared memory, while the FalkorDB graph lights up on the right." width="720">
 
 *Real screen recording, Oct 19, 2026: Claude reads tonight's dinner that ChatGPT saved a minute earlier. A calendar line is blurred for privacy; some app menus are in Japanese.*
 
-### Screenshots (real screens from the demo)
+### 📸 Screenshots (real screens from the demo)
 
 | ChatGPT saves tonight's dinner on its own | One command connects your AI tools |
 | --- | --- |
 | <img src="docs/images/real-chatgpt-saves.jpg" alt="ChatGPT confirms it saved tonight's dinner choice to the shared memory; the graph shows the new note." width="420"> | <img src="docs/images/real-npx-init.jpg" alt="Terminal running npx jinai-memory init: Claude Code and Codex added, existing memory previewed." width="420"> |
 
-### The shared memory graph (real screen)
+### 🌌 The shared memory graph (real screen)
 
 <img src="docs/images/real-graph.jpg" alt="Real screen of the Jin AI Memory graph: notes colored by the AI that wrote them (Claude orange, ChatGPT teal, Cursor purple, Copilot green), linked by topic and similarity in FalkorDB." width="100%">
 
@@ -26,15 +26,15 @@ One memory for every AI you use. Bring what you already have, share it between C
 
 ## Demo
 
-**Demo video:** [Watch on YouTube](https://youtu.be/1_GeZ6HTHMY) (about 1 minute)
+🎬 **Demo video:** [Watch on YouTube](https://youtu.be/1_GeZ6HTHMY) (about 1 minute)
 
-**Live preview, no token:** [Open the sample graph](https://yukeidaro.github.io/jinai-memory/?mock=1)
+👀 **Live preview, no token:** [Open the sample graph](https://yukeidaro.github.io/jinai-memory/?mock=1)
 or [open it in 2D](https://yukeidaro.github.io/jinai-memory/?mock=1&view=2d) (GitHub Pages, loads instantly).
 The Render deployment serves the same preview at
 [jinai-memory.onrender.com/?mock=1](https://jinai-memory.onrender.com/?mock=1); its free service sleeps, so the first load can take about **50 seconds**.
 The preview uses built-in samples and simulated access events, not live database reads.
 
-**Two ways to try it**
+🚀 **Two ways to try it**
 
 | You want to | Do this |
 | --- | --- |
@@ -59,7 +59,7 @@ Claude's custom connector opened the map and referred to yesterday's meal withou
 being asked to read memory. Tool use and recommendations still depend on the model;
 highlights show server-side access, not proof that a note influenced its answer.
 
-## Try it in 1 minute
+## ⚡ Try it in 1 minute
 
 1. Open the **live preview** above and click a node. No account or token is needed.
 2. For a working local MCP server, use **Node.js 24, Git and PowerShell**. No dependency installation or build is needed:
@@ -89,7 +89,7 @@ storage, so restarting loses them; reseeding appends another ten.
 Stop your local server with `Stop-Process -Id $server.Id`.
 For persistence, set `FALKORDB_URL` privately before starting instead of clearing it.
 
-## Bring your existing AI memory
+## 📥 Bring your existing AI memory
 
 Run the [combined importer](scripts/import.mjs) on your own machine:
 
@@ -142,7 +142,7 @@ Secret detection is heuristic, not a confidentiality guarantee.
 
 ![Illustrated import flow using fictional demo data](docs/images/demo-import.png)
 
-## How FalkorDB is the core
+## 🕸️ How FalkorDB is the core
 
 With `FALKORDB_URL` configured, **FalkorDB is the persistent memory store, vector
 index and traversal engine**, including the UI snapshot, not a visualization sidecar.
@@ -247,7 +247,7 @@ opening its URL in a browser returns 405. UI SSE at `/events` is separate.
 and `MEMORY_USER`; without it, the single-user default is `demo`.
 See the [deployment guide](docs/DEPLOY.md) for configuration and URL encoding.
 
-## MCP tools
+## 🛠️ MCP tools
 
 | Tool | Input | Result / behavior |
 | --- | --- | --- |
@@ -259,13 +259,13 @@ See the [deployment guide](docs/DEPLOY.md) for configuration and URL encoding.
 The server supplies `user` and `source`; they are not tool arguments. Clients may
 cache the map from `tools/list`; call `orient` to refresh. Some map labels are Japanese.
 
-## Architecture
+## 🏗️ Architecture
 
 See the [architecture diagrams and query counts](docs/ARCHITECTURE.md),
 [HTTP API](docs/API.md) and [store contract](docs/CONTRACT.md).
 The backend uses Node.js built-ins, including a RESP2 client for `GRAPH.QUERY`.
 
-## Tests
+## ✅ Tests
 
 Run `node --test`. The no-database run reports **323 tests: 322 pass, 1 skipped**.
 Coverage includes imports, cross-client dinner recall, user isolation, secret
@@ -274,7 +274,7 @@ The real-FalkorDB suite is opt-in with `FALKORDB_URL`; use a disposable test
 database. Real-FalkorDB contract checks previously passed on FalkorDB Cloud
 (2026-10-17); they were not rerun for this documentation update.
 
-## Deploy
+## ☁️ Deploy
 
 The [Render Blueprint](render.yaml) uses the Node 24 [Dockerfile](Dockerfile),
 Ohio, the free plan and `/healthz`. Configure `FALKORDB_URL` privately for
@@ -293,7 +293,7 @@ about missing `public/` is historical, since `public/index.html` is now included
 - **No public sign-up yet.** The hosted server is invite-only (trial tokens on request, evaluation only, no warranty or liability), so the GitHub Pages [live preview](https://yukeidaro.github.io/jinai-memory/?mock=1) shows the UI on sample data and the full flow needs [your own server](docs/DEPLOY.md). The CLI runs from GitHub (`npx github:yukeidaro/jinai-memory`) and is not on the npm registry. `init` was run by hand on Windows; macOS and Linux config paths are covered by automated tests only.
 - **Next.** Per-user token issuance and a rate-limited, isolated sandbox graph so anyone can try the full flow without deploying a server. If you want this, please star the repository.
 
-## Built during Graph Hacks
+## 🏁 Built during Graph Hacks
 
 Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs x FalkorDB),
 **October 15-18, 2026**. This repository's memory service, importers and visualizer
@@ -301,6 +301,10 @@ were newly written during the hackathon; the [commit history](https://github.com
 records implementation on October 17-18. Primary track: **Agent Memory and
 Coordination**; secondary track: **Company Brain**.
 
-## License
+## 📄 License
 
 [GNU AGPL-3.0-only](LICENSE).
+
+---
+
+Made with ☕ in Japan for Graph Hacks. If Jin AI Memory saves you from re-explaining yourself to one more AI, a ⭐ means a lot!
