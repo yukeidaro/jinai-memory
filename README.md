@@ -1,10 +1,10 @@
 # Jin AI Memory
 
-One memory graph for every AI you use, with FalkorDB at its core.
+One memory for every AI you use. Bring what you already have, share it between ChatGPT and Claude, and see exactly what each AI used.
 
-**Bring the AI memory you already have**: import skills, memory files, CLAUDE.md and Claude Code sessions.<br>
-**Share it across AIs**: ChatGPT, Claude and other HTTP MCP clients read and write the same user's graph.<br>
-**See memory access**: a 2D/3D view highlights memory operations, with notes and relationships stored in FalkorDB.
+**Bring the memory you already have**: one command turns your Claude Code skills, memory files, CLAUDE.md sections and past sessions into linked notes.<br>
+**Share it across AIs**: ChatGPT, Claude and other MCP clients read and write the same graph, stored in FalkorDB.<br>
+**See it**: a live 2D/3D map colors each note by the AI that wrote it and lights up the notes an AI just read or wrote.
 
 <img src="docs/images/demo-claude-reads.png" alt="Illustrated dinner handoff: Claude opens shared memory containing a meal saved by ChatGPT." width="640">
 

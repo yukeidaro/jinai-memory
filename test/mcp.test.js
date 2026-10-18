@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setImmediate as settle, setTimeout as delay } from "node:timers/promises";
 import { createEmbedder } from "../src/embedder.js";
 import { createMcpHandler } from "../src/mcp.js";
 import { createMemory } from "../src/memory.js";
@@ -10,6 +11,14 @@ const NOTE = {
   kind: "preference", title: "ハンバーグが好き", text: "# 好み\nハンバーグが好き",
   summary: "ハンバーグが好き", tags: ["ハンバーグ", "夕飯", "食事"],
 };
+const PREPARING_MAP = "Memory map is being prepared — call orient to get it.";
+
+function client(memory) {
+  const handle = createMcpHandler({ memory });
+  const request = (method, params, ctx = CTX) => handle({ jsonrpc: "2.0", id: 1, method, params }, ctx);
+  const call = (name, args, ctx) => request("tools/call", { name, arguments: args }, ctx);
+  return { handle, request, call };
+}
 
 function setup(t) {
   const store = createMemoryStore();
@@ -20,10 +29,20 @@ function setup(t) {
     now: () => new Date("2026-10-16T12:00:00.000Z"),
     onTouch: (event) => touches.push(event),
   });
-  const handle = createMcpHandler({ memory });
-  const request = (method, params, ctx = CTX) => handle({ jsonrpc: "2.0", id: 1, method, params }, ctx);
-  const call = (name, args, ctx) => request("tools/call", { name, arguments: args }, ctx);
-  return { store, memory, touches, handle, request, call };
+  return { store, memory, touches, ...client(memory) };
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+function mapDescription(reply) {
+  assert.equal(reply.error, undefined);
+  assert.equal(reply.result.tools.length, 4);
+  return reply.result.tools.find((tool) => tool.name === "open").description;
 }
 
 function result(reply) {
@@ -102,20 +121,202 @@ test("tools/list exposes exactly four schemas and succeeds with an empty graph o
   assert.ok(emptyReply.result.tools[1].description.endsWith("Memory map:\n"));
 });
 
-test("tools/list rebuilds the map on every call and safely reports map retrieval failures", async (t) => {
-  const { memory, call, request } = setup(t);
-  const before = (await request("tools/list")).result.tools[1].description;
-  await call("remember", NOTE);
-  const after = (await request("tools/list")).result.tools[1].description;
-  assert.notEqual(after, before);
-  assert.match(after, /Memory map:[\s\S]*ハンバーグ/u);
-  const broken = createMcpHandler({
-    memory: { ...memory, orient: async () => { throw new Error("private backend details"); } },
+test("tools/list returns within one second for a three-second map and shares one background build", { timeout: 5_000 }, async (t) => {
+  let builds = 0;
+  let building;
+  const { request } = client({
+    orient(args) {
+      builds += 1;
+      assert.deepEqual(args, CTX);
+      building = delay(3_000, "Prepared private map");
+      return building;
+    },
   });
-  const reply = await broken({ jsonrpc: "2.0", id: 1, method: "tools/list" }, CTX);
-  assert.equal(reply.result.tools.length, 4);
-  assert.match(reply.result.tools[1].description, /Memory map:\nUnavailable/u);
-  assert.doesNotMatch(JSON.stringify(reply), /private backend details/u);
+  await Promise.all(Array.from({ length: 3 }, async () => {
+    const started = performance.now();
+    const description = mapDescription(await request("tools/list"));
+    const elapsed = performance.now() - started;
+    assert.ok(elapsed < 1_000, `tools/list took ${elapsed.toFixed(1)}ms`);
+    assert.ok(description.endsWith(PREPARING_MAP));
+    t.diagnostic(`three-second map -> tools/list: ${elapsed.toFixed(1)}ms (< 1000ms)`);
+  }));
+  assert.equal(builds, 1);
+  await building;
+  await settle();
+  assert.ok(mapDescription(await request("tools/list")).endsWith("Prepared private map"));
+  assert.equal(builds, 1);
+});
+
+test("successful remember refreshes immediately without blocking and serves the old map until ready", { timeout: 2_000 }, async () => {
+  const next = deferred();
+  let builds = 0;
+  const { request, call } = client({
+    orient: () => ++builds === 1 ? "Original map" : next.promise,
+    remember: async () => ({ id: "saved" }),
+  });
+  assert.ok(mapDescription(await request("tools/list")).endsWith("Original map"));
+  result(await call("remember", NOTE));
+  assert.equal(builds, 2);
+  const started = performance.now();
+  assert.ok(mapDescription(await request("tools/list")).endsWith("Original map"));
+  assert.ok(performance.now() - started < 1_000);
+  assert.equal(builds, 2);
+  next.resolve("Updated map");
+  await settle();
+  assert.ok(mapDescription(await request("tools/list")).endsWith("Updated map"));
+  assert.equal(builds, 2);
+});
+
+test("remember before the first tools/list leaves map generation lazy and preserves notifications", async (t) => {
+  const { call, request, touches } = setup(t);
+  result(await call("remember", NOTE));
+  await settle();
+  assert.deepEqual(touches.map(({ op }) => op), ["remember"]);
+  assert.match(mapDescription(await request("tools/list")), /ハンバーグ/u);
+  assert.deepEqual(touches.map(({ op }) => op), ["remember", "orient"]);
+});
+
+test("maps expire at five minutes, refresh once in the background, and age from completion", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
+  const next = deferred();
+  let builds = 0;
+  const { request } = client({
+    orient: () => ++builds === 1 ? "Original map" : next.promise,
+  });
+  await request("tools/list");
+  t.mock.timers.tick(299_999);
+  assert.ok(mapDescription(await request("tools/list")).endsWith("Original map"));
+  assert.equal(builds, 1);
+  t.mock.timers.tick(1);
+  assert.ok(mapDescription(await request("tools/list")).endsWith("Original map"));
+  assert.equal(builds, 2);
+  t.mock.timers.tick(300_000);
+  await request("tools/list");
+  assert.equal(builds, 2);
+  next.resolve("Updated map");
+  await settle();
+  t.mock.timers.tick(299_999);
+  assert.ok(mapDescription(await request("tools/list")).endsWith("Updated map"));
+  assert.equal(builds, 2);
+  t.mock.timers.tick(1);
+  await request("tools/list");
+  assert.equal(builds, 3);
+});
+
+test("map caches are keyed by user, not source, and never mix users", async () => {
+  const builds = [];
+  const { request, call } = client({
+    orient: async ({ user, source }) => {
+      builds.push({ user, source });
+      return `${user}'s private map ${builds.length}`;
+    },
+    remember: async () => ({ id: "saved" }),
+  });
+  const bob = { user: "bob", source: "chatgpt" };
+  for (const ctx of [CTX, bob, { ...CTX, source: "cursor" }, bob]) {
+    const description = mapDescription(await request("tools/list", undefined, ctx));
+    assert.ok(description.includes(`${ctx.user}'s private map`));
+    assert.ok(!description.includes(`${ctx.user === "alice" ? "bob" : "alice"}'s private map`));
+  }
+  assert.deepEqual(builds, [CTX, bob]);
+  result(await call("remember", NOTE, CTX));
+  await settle();
+  assert.ok(mapDescription(await request("tools/list", undefined, bob)).endsWith("bob's private map 2"));
+  assert.ok(mapDescription(await request("tools/list")).endsWith("alice's private map 3"));
+  assert.equal(builds.length, 3);
+});
+
+test("writes during a map build discard the obsolete snapshot and coalesce into one follow-up build", { timeout: 2_000 }, async () => {
+  const first = deferred();
+  const next = deferred();
+  const builds = [];
+  let active = 0;
+  const { request, call } = client({
+    async orient({ source }) {
+      builds.push(source);
+      active += 1;
+      assert.equal(active, 1);
+      try {
+        return await (builds.length === 1 ? first.promise : next.promise);
+      } finally {
+        active -= 1;
+      }
+    },
+    remember: async () => ({ id: "saved" }),
+  });
+  const listing = request("tools/list");
+  await settle();
+  result(await call("remember", NOTE));
+  result(await call("remember", NOTE, { ...CTX, source: "chatgpt" }));
+  assert.deepEqual(builds, ["claude"]);
+  first.resolve("Obsolete map");
+  await settle();
+  assert.deepEqual(builds, ["claude", "chatgpt"]);
+  next.resolve("Latest map");
+  assert.ok(mapDescription(await listing).endsWith("Latest map"));
+  assert.ok(mapDescription(await request("tools/list")).endsWith("Latest map"));
+  assert.equal(builds.length, 2);
+  assert.equal(active, 0);
+});
+
+test("map failures keep tools/list successful, log no private data, and allow retries", async (t) => {
+  const log = t.mock.method(console, "error", () => {});
+  let builds = 0;
+  const { request } = client({
+    orient() {
+      builds += 1;
+      if (builds === 1) throw new Error("private backend details");
+      return Promise.reject(new Error("private user data"));
+    },
+  });
+  for (let i = 0; i < 2; i += 1) {
+    const reply = await request("tools/list");
+    assert.ok(mapDescription(reply).endsWith(PREPARING_MAP));
+    assert.doesNotMatch(JSON.stringify(reply), /private backend details|private user data/u);
+  }
+  assert.equal(builds, 2);
+  assert.deepEqual(log.mock.calls.map(({ arguments: args }) => args), [
+    ["Memory map refresh failed."], ["Memory map refresh failed."],
+  ]);
+});
+
+test("failed refresh preserves the previous map and retries without treating it as fresh", async (t) => {
+  const log = t.mock.method(console, "error", () => {});
+  const next = deferred();
+  let builds = 0;
+  const { request, call } = client({
+    orient() {
+      builds += 1;
+      if (builds === 1) return "Original map";
+      if (builds === 2) return next.promise;
+      return "Recovered map";
+    },
+    remember: async () => ({ id: "saved" }),
+  });
+  await request("tools/list");
+  result(await call("remember", NOTE));
+  assert.ok(mapDescription(await request("tools/list")).endsWith("Original map"));
+  next.reject(new Error("private backend details"));
+  await settle();
+  assert.equal(log.mock.calls.length, 1);
+  assert.ok(mapDescription(await request("tools/list")).endsWith("Original map"));
+  await settle();
+  assert.ok(mapDescription(await request("tools/list")).endsWith("Recovered map"));
+  assert.equal(builds, 3);
+});
+
+test("failed, invalid, and secret remember calls do not invalidate the map", async () => {
+  let builds = 0;
+  const { request, call } = client({
+    orient: async () => { builds += 1; return "Original map"; },
+    remember: async () => { throw new Error("private backend details"); },
+  });
+  await request("tools/list");
+  for (const args of [NOTE, {}, { ...NOTE, text: "password: fake-demo-password" }]) {
+    assert.equal((await call("remember", args)).result.isError, true);
+    assert.ok(mapDescription(await request("tools/list")).endsWith("Original map"));
+  }
+  assert.equal(builds, 1);
 });
 
 test("all four tools use the real memory layer and propagate user, source, and related nodes", async (t) => {
@@ -140,13 +341,13 @@ test("all four tools use the real memory layer and propagate user, source, and r
   assert.ok(touches.every((event) => event.source === "claude"));
 });
 
-test("orient and tools/list include the caller source in empty and populated map notifications", async (t) => {
-  const { call, request, touches } = setup(t);
+test("map builds and orient notify with the caller source; cached lists do not notify", async (t) => {
   for (const populated of [false, true]) {
-    if (populated) result(await call("remember", NOTE));
     for (const source of ["claude", "chatgpt"]) {
-      touches.length = 0;
+      const { memory, call, request, touches } = setup(t);
       const ctx = { user: "alice", source };
+      if (populated) await memory.remember({ ...NOTE, ...ctx });
+      touches.length = 0;
       await request("tools/list", undefined, ctx);
       result(await call("orient", {}, ctx));
       assert.equal(touches.length, 2);
@@ -156,6 +357,8 @@ test("orient and tools/list include the caller source in empty and populated map
         assert.equal(event.user, ctx.user);
         assert.equal(event.nodeIds.length > 0, populated);
       }
+      await request("tools/list", undefined, { ...ctx, source: "cursor" });
+      assert.equal(touches.length, 2);
     }
   }
 });
