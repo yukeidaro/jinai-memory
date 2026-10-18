@@ -14,9 +14,10 @@ One memory for every AI you use. Bring what you already have, share it between C
 
 **Demo video:** <!-- TODO(Yu): YouTube link -->
 
-**Live preview, no token:** [Open the sample graph](https://jinai-memory.onrender.com/?mock=1)
-or [open it in 2D](https://jinai-memory.onrender.com/?mock=1&view=2d).
-Render's free service sleeps; the first load can take about **50 seconds**.
+**Live preview, no token:** [Open the sample graph](https://yukeidaro.github.io/jinai-memory/?mock=1)
+or [open it in 2D](https://yukeidaro.github.io/jinai-memory/?mock=1&view=2d) (GitHub Pages, loads instantly).
+The Render deployment serves the same preview at
+[jinai-memory.onrender.com/?mock=1](https://jinai-memory.onrender.com/?mock=1); its free service sleeps, so the first load can take about **50 seconds**.
 The preview uses built-in samples and simulated access events, not live database reads.
 
 **What you'll see**
@@ -183,7 +184,7 @@ npx github:yukeidaro/jinai-memory init --server https://<host>
 > with `--server` or `JINAI_MEMORY_URL`; there is no default server.
 > `init` checks the token against the server before writing anything or copying a URL.
 > A failed check stops without changing files or the clipboard.
-> Without a server, the [live preview](https://jinai-memory.onrender.com/?mock=1) shows the UI on sample data.
+> Without a server, the [live preview](https://yukeidaro.github.io/jinai-memory/?mock=1) shows the UI on sample data.
 
 It detects Claude Code, Cursor, VS Code, Copilot CLI, Codex and Gemini CLI and adds the
 memory server to each one's MCP config (with a backup beside each changed file).
