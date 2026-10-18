@@ -19,7 +19,7 @@ export const RECORDINGS = [
     id: "settings",
     file: "03-settings.mp4",
     label: "Scene 3 \u2014 settings (recording pending)",
-    caption: "Claude Code, Cursor, VS Code, Codex, Gemini CLI: connected.",
+    caption: "Claude and ChatGPT connect with one custom connector URL.",
   },
   {
     id: "chatgpt-claudecode",
