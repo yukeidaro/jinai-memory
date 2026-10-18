@@ -3,7 +3,7 @@
 One memory for every AI you use. Bring what you already have, share it between ChatGPT and Claude, and see exactly what each AI used.
 
 **Bring the memory you already have**: one command turns your Claude Code skills, memory files, CLAUDE.md sections and past sessions into linked notes.<br>
-**Share it across AIs**: ChatGPT, Claude and other MCP clients read and write the same graph, stored in FalkorDB. [One command](#connect-your-ai) connects the AI tools on your machine.<br>
+**Share it across AIs**: ChatGPT, Claude and other MCP clients read and write the same graph, stored in FalkorDB. [One command](#connect-your-ai) connects the AI tools on your machine to your own memory server.<br>
 **See it**: a live 2D/3D map colors each note by the AI that wrote it and lights up the notes an AI just read or wrote.
 
 <img src="docs/images/demo-claude-reads.png" alt="Illustrated dinner handoff: Claude opens shared memory containing a meal saved by ChatGPT." width="640">
@@ -262,6 +262,9 @@ about missing `public/` is historical, since `public/index.html` is now included
 - **Fake embeddings by default without an API key.** Hashed word/character features are not semantic understanding. For semantic embeddings, set `EMBEDDINGS_PROVIDER=openai` and `OPENAI_API_KEY`, remove the 128-dimension override (OpenAI defaults to 1536), and use a fresh user graph. OpenAI receives embedded content and fallback queries; the server does not auto-load `.env`.
 - **Bounded output, not bounded scans.** Map/neighborhood work grows with the graph; `recall` has no token cap. `open` may shorten text; the UI shows the newest 500 Memory nodes with up to 8,000 characters each.
 - **Prototype boundaries.** No delete/edit tool, per-agent permissions or automatic session sync. The browser needs WebGL and third-party rendering modules from jsDelivr. The server is not loopback-only; restrict inbound access on a trusted local network.
+
+- **No public sign-up yet.** The hosted server is invite-only, so the GitHub Pages [live preview](https://yukeidaro.github.io/jinai-memory/?mock=1) shows the UI on sample data and the full flow needs [your own server](docs/DEPLOY.md). The CLI runs from GitHub (`npx github:yukeidaro/jinai-memory`) and is not on the npm registry. `init` was run by hand on Windows; macOS and Linux config paths are covered by automated tests only.
+- **Next.** Per-user token issuance and a rate-limited, isolated sandbox graph so anyone can try the full flow without deploying a server.
 
 ## Built during Graph Hacks
 
