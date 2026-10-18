@@ -9,7 +9,6 @@ import { isDeepStrictEqual, parseArgs } from "node:util";
 import { main as runImport } from "../scripts/import.mjs";
 import { ImportError, importEndpoint } from "./importer.js";
 
-const SERVER = "https://jinai-memory.onrender.com";
 const NAME = "jinai-memory";
 const SOURCES = ["claude-code", "cursor", "vscode", "copilot-cli", "codex", "gemini"];
 const MANUAL = ["claude", "chatgpt"];
@@ -26,12 +25,15 @@ const HELP = `Usage: npx github:yukeidaro/jinai-memory <command> [options]
   --yes                 Skip confirmation (init never sends memories)
   --dry-run             Show plans without writing files or copying to the clipboard
   --only <sources>      Comma-separated: ${[...SOURCES, ...MANUAL].join(",")}
-  --server <url>        HTTP(S) server (or JINAI_MEMORY_URL)
+  --server <url>        Required for init (or JINAI_MEMORY_URL); HTTPS, or loopback HTTP
   --copy <claude|chatgpt> Copy a manual connector URL without displaying it (init only)
   --skip-import         Skip the final memory preview (init only)
   --help                Show this help
 
 Set JINAI_MEMORY_TOKEN in the environment, or enter it at the hidden TTY prompt.
+Init checks the token with your server before writing files or copying a URL.
+Dry runs do not verify the token. Remove does not need a server.
+Example: npx github:yukeidaro/jinai-memory init --server https://<host>
 Tokens are never accepted as arguments. Backups are saved beside changed files.
 Unparseable JSON is left untouched; add the connection manually in that case.`;
 
@@ -464,10 +466,36 @@ function privateText(text, token) {
   return result.replace(/[\p{Cc}\p{Cf}]/gu, (char) => char === "\n" || char === "\t" ? char : " ");
 }
 
+async function verifyToken(endpoint, fetchImpl) {
+  const signal = AbortSignal.timeout(90_000);
+  let reason = "network error";
+  try {
+    const response = await fetchImpl(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      redirect: "error",
+      signal,
+    });
+    if (response.status === 200) {
+      reason = "invalid JSON";
+      const reply = await response.json();
+      if (Array.isArray(reply?.result?.tools)) return;
+      reason = "invalid tools/list response";
+    } else {
+      reason = `HTTP ${response.status}`;
+      await response.body?.cancel();
+    }
+  } catch {
+    if (signal.aborted) reason = "request timed out";
+  }
+  throw new InstallerError(`Could not verify the token with the server (${endpoint.host}: ${reason}). Nothing was written.`);
+}
+
 export async function main(args = process.argv.slice(2), {
   env = process.env, home = os.homedir(), platform = process.platform, io = fs,
   stdin = process.stdin, stdout = process.stdout, log = console.log, error = console.error,
-  exec = execute, importMain = runImport, now = () => new Date(),
+  exec = execute, importMain = runImport, now = () => new Date(), fetchImpl = globalThis.fetch,
 } = {}) {
   let token = env.JINAI_MEMORY_TOKEN;
   const out = (text) => log(privateText(text, token));
@@ -493,12 +521,21 @@ export async function main(args = process.argv.slice(2), {
     }
     home = path.resolve(values.home ?? home);
     const removing = command === "remove";
+    const server = (values.server ?? env.JINAI_MEMORY_URL ?? "").replace(/\/+$/u, "");
     if (!removing) {
+      if (!server.trim()) {
+        throw new InstallerError("Pass your server with --server <url> or JINAI_MEMORY_URL. Nothing was written.");
+      }
       token = token || await readHiddenToken(stdin, stdout);
       if (!token.trim()) throw new InstallerError("JINAI_MEMORY_TOKEN must not be empty. Nothing was written.");
+      const endpoint = importEndpoint(server, token, "claude-code");
+      if (!/^https?:\/\//iu.test(server) || endpoint.protocol !== "https:" &&
+          !(endpoint.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname))) {
+        throw new InstallerError("Use HTTPS for the server; HTTP is allowed only for localhost, 127.0.0.1, or [::1]. Nothing was written.");
+      }
+      if (values["dry-run"]) out("Token not verified (dry run).");
+      else await verifyToken(endpoint, fetchImpl);
     }
-    const server = (values.server ?? env.JINAI_MEMORY_URL ?? SERVER).replace(/\/+$/u, "");
-    if (!removing) importEndpoint(server, token, "claude-code");
     const hasSecret = (text) => Boolean(token && (text.includes(token) || text.includes(encodeURIComponent(token))));
     const tools = await detectTools({ home, env, platform, io, isolated: values.home !== undefined });
     out(`Found: ${tools.filter((tool) => tool.found).map((tool) => `${tool.label} (${tool.source})`).join(", ") || "none"}`);

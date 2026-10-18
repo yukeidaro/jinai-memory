@@ -11,7 +11,9 @@ import { detectTools, main, readHiddenToken } from "../src/installer.js";
 const BIN = fileURLToPath(new URL("../bin/jinai-memory.mjs", import.meta.url));
 const TOKEN = "fictional-token+/=";
 const SOURCES = ["claude-code", "cursor", "vscode", "copilot-cli", "codex", "gemini"];
-const BASE = "https://jinai-memory.onrender.com";
+const BASE = "https://example.invalid";
+const fakeFetch = async () => Response.json({ jsonrpc: "2.0", id: 1, result: { tools: [] } });
+const FETCH_PRELOAD = `data:text/javascript,${encodeURIComponent(`globalThis.fetch = ${fakeFetch.toString()};`)}`;
 
 async function temporary(t) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "jinai-installer-fictional-"));
@@ -65,9 +67,10 @@ async function run(home, args, overrides = {}) {
   const stdout = [];
   const stderr = [];
   const code = await main([...args, "--home", home], {
-    home, env: { JINAI_MEMORY_TOKEN: TOKEN }, platform: "win32",
+    home, env: { JINAI_MEMORY_TOKEN: TOKEN, JINAI_MEMORY_URL: BASE }, platform: "win32",
     stdin: { isTTY: false }, stdout: { write: (text) => stdout.push(text) },
     log: (text) => stdout.push(text), error: (text) => stderr.push(text),
+    fetchImpl: fakeFetch,
     ...overrides,
   });
   const result = { code, stdout: stdout.join("\n"), stderr: stderr.join("\n") };
@@ -94,6 +97,215 @@ async function backups(filename) {
   return (await fs.readdir(path.dirname(filename))).filter((name) =>
     name.startsWith(`${path.basename(filename)}.jinai-backup-`));
 }
+
+test("init refuses missing servers, unsafe transports and failed token checks before any side effects", async (t) => {
+  const home = await temporary(t);
+  await fixture(home, "win32");
+  const before = await snapshot(home);
+  const cases = [
+    {
+      name: "no server or token",
+      env: {},
+      expected: /Pass your server with --server <url> or JINAI_MEMORY_URL\. Nothing was written\./u,
+      requests: 0,
+    },
+    {
+      name: "no server with a token",
+      env: { JINAI_MEMORY_TOKEN: TOKEN },
+      expected: /Pass your server with --server <url> or JINAI_MEMORY_URL\. Nothing was written\./u,
+      requests: 0,
+    },
+    {
+      name: "empty explicit server does not fall back to the environment",
+      server: "",
+      expected: /Pass your server with --server <url> or JINAI_MEMORY_URL\. Nothing was written\./u,
+      requests: 0,
+    },
+    ...[
+      "http://example.invalid", "http://localhost.example.invalid", "http://127.0.0.2",
+      "http://[::ffff:127.0.0.1]", "http://localtest.me", "ftp://localhost",
+      "https:example.invalid", "http:localhost",
+    ].map((server) => ({
+      name: `unsafe server ${server}`, server, expected: /server|HTTPS/u, requests: 0,
+    })),
+    ...[201, 204, 301, 307, 401, 403, 404, 500, 503].map((status) => ({
+      name: `HTTP ${status}`,
+      fetchImpl: async () => new Response(status === 204 ? null : `PRIVATE ${TOKEN}`, { status }),
+      expected: new RegExp(`Could not verify the token with the server \\(example\\.invalid: HTTP ${status}\\)\\. Nothing was written\\.`, "u"),
+    })),
+    {
+      name: "network error with a private URL in the exception",
+      fetchImpl: async () => { throw new Error(`PRIVATE ${BASE}/mcp/${encodeURIComponent(TOKEN)}-claude-code ${TOKEN}`); },
+      expected: /Could not verify the token with the server \(example\.invalid: network error\)\. Nothing was written\./u,
+    },
+    {
+      name: "non-JSON response",
+      fetchImpl: async () => new Response(`PRIVATE ${TOKEN} ${encodeURIComponent(TOKEN)}`),
+      expected: /Could not verify the token with the server \(example\.invalid: invalid JSON\)\. Nothing was written\./u,
+    },
+    ...[null, {}, { error: { message: `PRIVATE ${TOKEN}` } }, { result: {} }, { result: { tools: {} } }].map((reply, index) => ({
+      name: `missing tools array ${index}`,
+      fetchImpl: async () => Response.json(reply),
+      expected: /Could not verify the token with the server \(example\.invalid: invalid tools\/list response\)\. Nothing was written\./u,
+    })),
+  ];
+  for (const scenario of cases) {
+    await t.test(scenario.name, async () => {
+      const effects = [];
+      let requests = 0;
+      const io = { ...fs };
+      for (const method of ["mkdir", "writeFile", "copyFile", "rename", "unlink"]) {
+        io[method] = async (...args) => {
+          effects.push(method);
+          return fs[method](...args);
+        };
+      }
+      const result = await run(home, [
+        "init", "--yes", "--copy", "claude",
+        ...(scenario.server === undefined ? [] : ["--server", scenario.server]),
+      ], {
+        io,
+        ...(scenario.env === undefined ? {} : { env: scenario.env }),
+        fetchImpl: async (...args) => {
+          requests += 1;
+          return (scenario.fetchImpl ?? fakeFetch)(...args);
+        },
+        exec: async () => { effects.push("clipboard"); return true; },
+        importMain: async () => { effects.push("import"); return { failed: 0 }; },
+      });
+      assert.equal(result.code, 1);
+      assert.match(result.stderr, scenario.expected);
+      assert.equal(requests, scenario.requests ?? 1);
+      assert.deepEqual(effects, []);
+      assert.deepEqual(await snapshot(home), before);
+      assert.ok(!result.stderr.includes("PRIVATE") && !result.stderr.includes(BASE));
+    });
+  }
+});
+
+test("verification uses a 90-second timeout for both the request and response body", async (t) => {
+  for (const stage of ["request", "body"]) {
+    await t.test(stage, async (t) => {
+      const home = await temporary(t);
+      await fs.mkdir(path.join(home, ".cursor"));
+      const before = await snapshot(home);
+      const durations = [];
+      t.mock.method(AbortSignal, "timeout", (milliseconds) => {
+        durations.push(milliseconds);
+        const controller = new AbortController();
+        queueMicrotask(() => controller.abort(new DOMException("PRIVATE", "TimeoutError")));
+        return controller.signal;
+      });
+      let requests = 0;
+      let copied = false;
+      const result = await run(home, ["init", "--yes", "--copy", "claude", "--skip-import"], {
+        fetchImpl: async (_url, { signal }) => {
+          requests += 1;
+          const pending = async () => {
+            signal.throwIfAborted();
+            return new Promise((_resolve, reject) => {
+              signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+            });
+          };
+          return stage === "request" ? pending() : { status: 200, json: pending };
+        },
+        exec: async () => { copied = true; return true; },
+      });
+      assert.equal(result.code, 1);
+      assert.match(result.stderr, /Could not verify the token with the server \(example\.invalid: request timed out\)\. Nothing was written\./u);
+      assert.deepEqual(durations, [90_000]);
+      assert.equal(requests, 1);
+      assert.equal(copied, false);
+      assert.deepEqual(await snapshot(home), before);
+    });
+  }
+});
+
+test("one successful tools/list check precedes all configuration writes and clipboard changes", async (t) => {
+  const home = await temporary(t);
+  const { files } = await fixture(home, "win32");
+  const before = await snapshot(home);
+  const calls = [];
+  const effects = [];
+  const io = { ...fs };
+  for (const method of ["mkdir", "writeFile", "copyFile", "rename", "unlink"]) {
+    io[method] = async (...args) => {
+      effects.push(method);
+      return fs[method](...args);
+    };
+  }
+  const result = await run(home, ["init", "--yes", "--copy", "claude", "--skip-import"], {
+    io,
+    fetchImpl: async (url, settings) => {
+      calls.push({ url, settings });
+      assert.deepEqual(await snapshot(home), before);
+      effects.push("verify");
+      return Response.json({ jsonrpc: "2.0", id: 1, result: { tools: [{ name: "orient" }] } });
+    },
+    exec: async () => { effects.push("clipboard"); return true; },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url.href, `${BASE}/mcp/${encodeURIComponent(TOKEN)}-claude-code`);
+  assert.equal(calls[0].settings.method, "POST");
+  assert.deepEqual(calls[0].settings.headers, { "Content-Type": "application/json" });
+  assert.equal(calls[0].settings.body, '{"jsonrpc":"2.0","id":1,"method":"tools/list"}');
+  assert.equal(calls[0].settings.redirect, "error");
+  assert.ok(calls[0].settings.signal instanceof AbortSignal);
+  assert.equal(effects[0], "verify");
+  assert.ok(effects.includes("writeFile"));
+  assert.equal(effects.at(-1), "clipboard");
+  assert.equal((result.stdout.match(/: add \|/gu) ?? []).length, 6);
+  for (const source of SOURCES) {
+    assert.ok((await fs.readFile(files[source], "utf8")).includes(
+      `${BASE}/mcp/${encodeURIComponent(TOKEN)}-${source}`));
+  }
+});
+
+test("init accepts explicit HTTPS and only whitelisted loopback HTTP servers", async (t) => {
+  for (const server of ["https://example.invalid/base///", "http://localhost:8787", "http://127.0.0.1:8787", "http://[::1]:8787"]) {
+    const home = await temporary(t);
+    await fs.mkdir(path.join(home, ".cursor"));
+    const endpoints = [];
+    const result = await run(home, ["init", "--server", server, "--yes", "--skip-import"], {
+      fetchImpl: async (endpoint) => { endpoints.push(endpoint); return fakeFetch(); },
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(endpoints.length, 1);
+    assert.equal(endpoints[0].href, `${server.replace(/\/+$/u, "")}/mcp/${encodeURIComponent(TOKEN)}-claude-code`);
+    assert.ok(JSON.parse(await fs.readFile(locations(home, "win32").cursor, "utf8")).mcpServers["jinai-memory"]);
+  }
+});
+
+test("dry-run does not verify tokens or change files or the clipboard", async (t) => {
+  const home = await temporary(t);
+  await fixture(home, "win32");
+  const before = await snapshot(home);
+  const effects = [];
+  const result = await run(home, ["init", "--dry-run", "--copy", "claude"], {
+    fetchImpl: async () => { effects.push("fetch"); throw new Error("PRIVATE"); },
+    exec: async () => { effects.push("clipboard"); return true; },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /Token not verified \(dry run\)\./u);
+  assert.deepEqual(effects, []);
+  assert.deepEqual(await snapshot(home), before);
+});
+
+test("remove needs no server or token and never verifies a connection", async (t) => {
+  const home = await temporary(t);
+  await fs.mkdir(path.join(home, ".cursor"));
+  assert.equal((await run(home, ["init", "--yes", "--skip-import"])).code, 0);
+  let requests = 0;
+  const result = await run(home, ["remove", "--yes"], {
+    env: {},
+    fetchImpl: async () => { requests += 1; throw new Error("PRIVATE"); },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(requests, 0);
+  await assert.rejects(fs.readFile(locations(home, "win32").cursor), { code: "ENOENT" });
+  await assert.rejects(fs.readFile(path.join(home, ".jinai-memory", "installs.json")), { code: "ENOENT" });
+});
 
 for (const platform of ["win32", "darwin"]) {
   test(`${platform}: only existing tool locations are detected and listed`, async (t) => {
@@ -193,7 +405,9 @@ for (const platform of ["win32", "darwin"]) {
         assert.deepEqual(await snapshot(home), before);
       }
     }
-    const missing = await run(home, ["init", "--yes", "--skip-import"], { env: {}, platform });
+    const missing = await run(home, ["init", "--yes", "--skip-import"], {
+      env: { JINAI_MEMORY_URL: BASE }, platform,
+    });
     assert.equal(missing.code, 1);
     assert.match(missing.stderr, /Set JINAI_MEMORY_TOKEN/u);
     assert.deepEqual(await snapshot(home), before);
@@ -275,7 +489,7 @@ test("--home isolates all external config variables, and --only never writes oth
   const home = await temporary(t);
   const outside = await temporary(t);
   const { files } = await fixture(home, "win32");
-  const env = { JINAI_MEMORY_TOKEN: TOKEN, APPDATA: outside, XDG_CONFIG_HOME: outside, COPILOT_HOME: outside };
+  const env = { JINAI_MEMORY_TOKEN: TOKEN, JINAI_MEMORY_URL: BASE, APPDATA: outside, XDG_CONFIG_HOME: outside, COPILOT_HOME: outside };
   await put(path.join(outside, "mcp-config.json"), "external bytes");
   const before = await snapshot(home);
   const external = await snapshot(outside);
@@ -515,7 +729,7 @@ test("malformed Unicode tokens are rejected without echoing raw exception conten
   const secret = "fictional-malformed-\uD800";
   const output = [];
   const code = await main(["init", "--yes", "--home", home], {
-    home, env: { JINAI_MEMORY_TOKEN: secret },
+    home, env: { JINAI_MEMORY_TOKEN: secret, JINAI_MEMORY_URL: BASE }, fetchImpl: fakeFetch,
     log: (text) => output.push(text), error: (text) => output.push(text),
   });
   assert.equal(code, 1);
@@ -601,8 +815,8 @@ test("CLI child processes support init/remove/help and reject token arguments wi
   const home = await temporary(t);
   await fs.mkdir(path.join(home, ".cursor"));
   const cli = (args, env = {}) => {
-    const result = spawnSync(process.execPath, [BIN, ...args, "--home", home], {
-      env: { SystemRoot: process.env.SystemRoot, TEMP: home, TMP: home, ...env },
+    const result = spawnSync(process.execPath, ["--import", FETCH_PRELOAD, BIN, ...args, "--home", home], {
+      env: { SystemRoot: process.env.SystemRoot, TEMP: home, TMP: home, JINAI_MEMORY_URL: BASE, ...env },
       encoding: "utf8", timeout: 10_000, windowsHide: true,
     });
     assert.ifError(result.error);
@@ -617,6 +831,13 @@ test("CLI child processes support init/remove/help and reject token arguments wi
   const missing = cli(["init", "--yes", "--skip-import"]);
   assert.equal(missing.status, 1);
   assert.deepEqual(await snapshot(home), before);
+  const noServer = cli(["init", "--yes", "--skip-import"], {
+    JINAI_MEMORY_TOKEN: TOKEN, JINAI_MEMORY_URL: "",
+  });
+  assert.equal(noServer.status, 1);
+  assert.equal(noServer.stderr.trim(),
+    "Pass your server with --server <url> or JINAI_MEMORY_URL. Nothing was written.");
+  assert.deepEqual(await snapshot(home), before);
   const installed = cli(["init", "--yes", "--skip-import"], { JINAI_MEMORY_TOKEN: TOKEN });
   assert.equal(installed.status, 0, installed.stderr);
   assert.match(installed.stdout, /Cursor: add/u);
@@ -624,6 +845,10 @@ test("CLI child processes support init/remove/help and reject token arguments wi
   const help = cli(["help"]);
   assert.equal(help.status, 0, help.stderr);
   assert.match(help.stdout, /Usage: npx github:yukeidaro\/jinai-memory/u);
+  assert.match(help.stdout, /Required for init \(or JINAI_MEMORY_URL\)/u);
+  assert.match(help.stdout, /init --server https:\/\/<host>/u);
+  assert.ok(!help.stdout.includes("onrender.com"));
+  assert.equal(cli(["init", "--help"], { JINAI_MEMORY_URL: "" }).stdout, help.stdout);
 });
 
 test("CLI walkthrough: dry-run, init with memory preview, then remove in a fictional home", async (t) => {
@@ -633,8 +858,8 @@ test("CLI walkthrough: dry-run, init with memory preview, then remove in a ficti
     "## Fictional preferences\nUse short answers for this fictional demonstration.\n");
   const cli = (args) => {
     const command = [...args, "--home", home];
-    const result = spawnSync(process.execPath, [BIN, ...command], {
-      env: { SystemRoot: process.env.SystemRoot, TEMP: home, TMP: home, JINAI_MEMORY_TOKEN: TOKEN },
+    const result = spawnSync(process.execPath, ["--import", FETCH_PRELOAD, BIN, ...command], {
+      env: { SystemRoot: process.env.SystemRoot, TEMP: home, TMP: home, JINAI_MEMORY_TOKEN: TOKEN, JINAI_MEMORY_URL: BASE },
       encoding: "utf8", timeout: 10_000, windowsHide: true,
     });
     assert.ifError(result.error);
