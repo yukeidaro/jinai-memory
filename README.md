@@ -1,75 +1,139 @@
 # Jin AI Memory
 
-One memory graph for every AI you use — and you can see what it uses.
+One memory graph for every AI you use, with FalkorDB at its core.
 
-**Bring the AI memory you already have** — one command imports Claude Code skills, memory files, CLAUDE.md and past sessions.<br>
-**Every AI shares it** — ChatGPT, Claude and any MCP client read and write the same graph.<br>
-**You can see it** — a 2D/3D view lights up what each AI used; FalkorDB stores and links it.
+**Bring the AI memory you already have**: import skills, memory files, CLAUDE.md and Claude Code sessions.<br>
+**Share it across AIs**: ChatGPT, Claude and other HTTP MCP clients read and write the same user's graph.<br>
+**See memory access**: a 2D/3D view highlights memory operations, with notes and relationships stored in FalkorDB.
 
-Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs x FalkorDB).
-Primary track: **Agent Memory and Coordination**.
+<img src="docs/images/demo-claude-reads.png" alt="Illustrated dinner handoff: Claude opens shared memory containing a meal saved by ChatGPT." width="640">
 
-**Demo video:** <!-- TODO: video link -->
-**Public demo:** <!-- TODO: public demo URL, without a token -->
+*Demo-video still with fictional data, not a client screenshot.*
 
-## The problem / What it does
+## Demo
 
-Your AI tools do not share their memories. Tell ChatGPT something today, and
-Claude needs the same introduction tomorrow.
+**Demo video:** <!-- TODO(Yu): YouTube link -->
 
-Jin AI Memory exposes one user's graph over MCP to Claude, ChatGPT, Cursor, and
-Copilot. It stores Markdown notes as **preferences, dated events, facts, or
-decisions**. A 2D/3D browser view colors notes by their writing AI, shows their
-connections, and highlights nodes reported by memory operations. This is a
-record of server-side memory access, not proof that a model used a note in its answer.
+**Live preview, no token:** [Open the sample graph](https://jinai-memory.onrender.com/?mock=1)
+or [open it in 2D](https://jinai-memory.onrender.com/?mock=1&view=2d).
+Render's free service sleeps; the first load can take about **50 seconds**.
+The preview uses built-in samples and simulated access events, not live database reads.
 
-**Dinner example:** tell ChatGPT, "I love burgers. Help me make a recipe,"
-then save the meal as a dated event. The next day, ask Claude, "What should I have
-for dinner?" It can open the shared dinner topic and see yesterday's meal.
-Fallback `recall` separates preferences from `recent_events`, with `days_ago`.
-The AI decides whether to avoid repeating dinner; the server does not exclude it.
-The seed script supplies fictional English notes: ChatGPT's "Loves burgers"
-preference and yesterday's "Dinner: burgers" event, dated at local noon.
+**What you'll see**
+
+- Import existing AI context into linked Markdown memories.
+- ChatGPT saves a dinner preference and dated meal; Claude can open them the next day.
+- Explore notes by writing AI, switch 2D/3D, and watch memory-access highlights.
+
+In a manual check on October 17-18, 2026, ChatGPT's developer-mode connector saved
+a preference and dated event without an explicit save request. The next day,
+Claude's custom connector opened the map and referred to yesterday's meal without
+being asked to read memory. Tool use and recommendations still depend on the model;
+highlights show server-side access, not proof that a note influenced its answer.
+
+## Try it in 1 minute
+
+1. Open the **live preview** above and click a node. No account or token is needed.
+2. For a working local MCP server, use **Node.js 24, Git and PowerShell**. No dependency installation or build is needed:
+
+```powershell
+git clone https://github.com/yukeidaro/jinai-memory.git
+Set-Location .\jinai-memory
+$env:MEMORY_TOKEN = [guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N")
+$env:MEMORY_USERS = $null
+$env:FALKORDB_URL = $null
+$env:EMBEDDINGS_PROVIDER = "fake"
+$env:EMBED_DIM = "128"
+$env:MEMORY_USER = "demo"
+$env:PORT = "8787"
+$server = Start-Process node -ArgumentList ".\src\server.js" -NoNewWindow -PassThru
+```
+
+Wait for `Listening on port 8787`, then run in the **same shell**:
+
+```powershell
+node .\scripts\seed-demo.mjs http://localhost:8787 $env:MEMORY_TOKEN
+Start-Process "http://localhost:8787/?token=$([uri]::EscapeDataString($env:MEMORY_TOKEN))"
+```
+
+This seeds **10 fictional memories** across four AI sources. It uses in-memory
+storage, so restarting loses them; reseeding appends another ten.
+Stop your local server with `Stop-Process -Id $server.Id`.
+For persistence, set `FALKORDB_URL` privately before starting instead of clearing it.
+
+## Bring your existing AI memory
+
+Run the [combined importer](scripts/import.mjs) on your own machine:
+
+```powershell
+node .\scripts\import.mjs
+```
+
+The default is a **dry run**: no network requests or state writes. Example
+inventory from the author's PC, not a benchmark or expected count:
+
+```text
+Dry run: nothing sent. Review with --verbose; to send, rerun with --yes.
+skills                74 ✓
+memory files          17 ✓
+CLAUDE.md sections    16 ✓
+Claude Code sessions  18 ✓
+secrets skipped        0 ✓
+```
+
+Counts include unchanged eligible entries; a check mark does **not** mean an upload.
+Use `--verbose` to review titles, paths and status, never note bodies or summaries.
+
+| Extracted locally | Not imported |
+| --- | --- |
+| Claude Code and Copilot `SKILL.md` files; Claude Code project memory; global `CLAUDE.md` split at `##` headings | The `MEMORY.md` index |
+| One dated event per eligible Claude Code session: first three human requests (up to 200 characters each), edited filenames, skills/agents, PR links and activity counts | Full transcripts, AI answer bodies (except extracted PR URLs), thinking, tool results, images and attachments |
+| Project/file/skill tags that connect sessions | Scratch workspaces; detected secret-bearing file sections or session items |
+
+After reviewing confidentiality, send only to **your own trusted server**. For the
+local server started above:
+
+```powershell
+$env:JINAI_MEMORY_URL = "http://localhost:8787"
+$env:JINAI_MEMORY_TOKEN = $env:MEMORY_TOKEN
+node .\scripts\import.mjs --yes
+```
+
+The import token comes **only from `JINAI_MEMORY_TOKEN`**, never a CLI argument.
+For hosted imports, use HTTPS and supply the token privately. `--home` selects
+another home; `--root`, `--exclude-project`, `--since` and `--limit` filter sessions.
+Use `--help` for options, or the separate [file](scripts/import-local.mjs) and
+[session](scripts/import-transcripts.mjs) commands for independent control.
+
+Successful sends update local state under `<home>\.jinai-memory`; unchanged entries
+are skipped on reruns. Changed file sections append notes; changed sessions use
+`externalId` to replace a note and `follows` to link consecutive sessions in a project.
+Keep separate state for different servers/tokens. **Never commit personal files,
+transcripts, extracted notes, tokens or import state to this repository.**
+Secret detection is heuristic, not a confidentiality guarantee.
+
+![Illustrated import flow using fictional demo data](docs/images/demo-import.png)
 
 ## How FalkorDB is the core
 
-FalkorDB is the persistent store, vector index, and relationship traversal engine,
-not an auxiliary visualization database. With `FALKORDB_URL` configured, all
-memory operations and the UI snapshot use the FalkorDB adapter.
+With `FALKORDB_URL` configured, **FalkorDB is the persistent memory store, vector
+index and traversal engine**, including the UI snapshot, not a visualization sidecar.
+Memory nodes hold Markdown, kind, dates and an embedding. `ABOUT` links Topics,
+`MENTIONED_BY` records the writing AI, `RELATES_TO` holds explicit references, and
+`NEXT_STEP` links a predecessor to the current imported session.
 
-```mermaid
-flowchart LR
-    M["Memory: Markdown, kind, dates, embedding"] -->|ABOUT| T["Topic: tag name"]
-    M -->|MENTIONED_BY| S["Source: writing AI"]
-    M -->|"SIMILAR: weight w"| N["Another Memory"]
-    M -->|RELATES_TO| R["Explicitly related Memory or Topic"]
-```
+**Wire on write, follow on read.** Each `remember` embeds once, queries FalkorDB's
+cosine vector index, and adds up to three `SIMILAR` edges with similarity >= 0.3.
+Weights combine similarity and recency. `orient` supplies an entry map in the
+`open` tool description; `open` follows edges without another embedding.
+`recall` is a fallback that embeds the question once.
 
-Relationships preserve authorship, connect synonymous tags to shared notes, and
-make nearby context navigable without embedding a new question on every read.
-`SIMILAR` edges are written in one direction; reads traverse either direction.
-`RELATES_TO` comes from explicit references. `NEXT_STEP` is supported by the
-store and visualization, but is not created by the current `remember` tool.
-
-**Indexes.** `ensureIndexes` creates a cosine vector index on `Memory.embedding`
-with the configured dimension, plus range indexes on `Memory.id`, `Topic.id`,
-and `Source.id`. It waits for `OPERATIONAL` status and rejects an incompatible
-existing vector index.
-
-These are three actual query shapes from
-[`src/store/falkordb-store.js`](src/store/falkordb-store.js):
-
-**1. Create the vector index** (`$similarity` is `"cosine"`):
+These query shapes come from the [FalkorDB adapter](src/store/falkordb-store.js):
 
 ```cypher
 CREATE VECTOR INDEX FOR (n:Memory) ON (n.embedding)
 OPTIONS {dimension: $dim, similarityFunction: $similarity}
 ```
-
-The ID index statement is `CREATE INDEX FOR (n:Memory) ON (n.id)`, also issued
-for `Topic` and `Source`.
-
-**2. Find vector neighbors**, including the label filter used by the memory layer:
 
 ```cypher
 CALL db.idx.vector.queryNodes($label, $attribute, $candidates, vecf32($embedding))
@@ -78,14 +142,6 @@ WHERE any(label IN labels(node) WHERE label IN $labels)
 RETURN node, score ORDER BY score ASC LIMIT $k
 ```
 
-Here `$label = "Memory"`, `$attribute = "embedding"`, and `$labels = ["Memory"]`.
-The procedure's `score` is cosine **distance**, so the adapter converts it to
-similarity with `clamp(1 - distance, -1, 1)`. Before this filtered query it counts
-embedded Memory nodes and sets `$candidates` to at least that count; it does not
-request only `$k` candidates from the index.
-
-**3. Traverse neighbors in both directions**, using the optional type filter:
-
 ```cypher
 MATCH (a {id: $id})-[r]-(n)
 WHERE type(r) IN $types
@@ -93,466 +149,96 @@ RETURN DISTINCT n, r, startNode(r).id, endNode(r).id
 ORDER BY coalesce(r.w, 0) DESC, n.id LIMIT $limit
 ```
 
-Topic reads set `$types = ["ABOUT"]`; ordinary Memory reads omit the `WHERE`
-clause. The returned edge retains its original direction.
+Here `$similarity = "cosine"`, `$label = "Memory"`, `$attribute = "embedding"`,
+and `$labels = ["Memory"]`. The vector procedure returns distance; the adapter
+converts it to similarity. Topic opens use `$types = ["ABOUT"]`; Memory opens
+omit the type filter. Reads traverse both directions.
 
-**User separation.** Every store method selects the graph `memory:<user>`.
-Graph names are validated; values enter Cypher through parameters. Dynamic
-schema identifiers are quoted, not treated as value parameters. The HTTP demo
-uses one configured `MEMORY_USER` (default `demo`) for all AI sources: this is
-graph-level namespacing, not a multi-account authentication service.
+The entry map stays within **400 estimated tokens**, including at **2,000 notes**
+in the [in-memory scale test](test/scale.test.js). `open` returns at most five
+neighbors within 800 estimated tokens. These are output bounds using a character
+estimator, **not model-token measurements or constant database cost**.
 
-The dependency-free client uses `GRAPH.QUERY ... --compact` over RESP2, with
-`node:net` for `redis://` and `node:tls` for `rediss://`.
+Manual measurements on **2026-10-17**, from Japan with Render Ohio and FalkorDB
+Cloud GCP us-central1: `remember` **0.5-0.9 s**, `recall` **0.35 s**, `orient`
+**0.6 s**. These observations are not a throughput benchmark.
 
-## Why it stays cheap
+![Illustrated FalkorDB write-time linking and read-time traversal](docs/images/demo-falkordb.png)
 
-**Wire on write, follow on read.** `remember` embeds the new note once, searches
-for existing notes, and creates up to **3** `SIMILAR` edges above or equal to
-**0.3** similarity. Their weight is:
-
-```text
-recency = exp(-age_in_days / 30)
-w = 0.7 * similarity + 0.3 * recency
-```
-
-`tools/list` builds an `orient` entry map directly into the `open` tool
-description. The AI can read that map and call `open` by title or ID instead of
-searching every turn. `orient` and `open` make **zero embedding calls**; `recall`
-is a fallback that embeds the question once.
-
-| Response | Bound in the implementation |
-| --- | --- |
-| `orient` map | At most 5 topic groups; at most 400 estimated tokens |
-| `open` | One note/topic plus at most 5 distinct neighboring nodes, which may include Topics and Sources; serialized result at most 800 estimated tokens |
-| Scale check | 2,000 saved notes, 2,000 write embeddings; map and Memory/Topic opens retain those bounds with no extra embeddings |
-
-The estimator charges **1 token per non-ASCII character and 1/4 per ASCII
-character**; it is not a model tokenizer. Long `open` fields are shortened
-without changing the stored note. These bounds cover the map and result payload,
-not all MCP descriptions, wrappers, or a model's actual token count.
-
-This bounds model-facing context, **not database work or latency**. `orient`
-reads all Topics and their neighborhoods; `open` fetches a full neighborhood
-before selecting five. The filtered vector search can request every embedded
-Memory as a candidate. `recall` output has no corresponding token cap.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    AI["Claude / ChatGPT / Cursor / Copilot"] -->|"MCP HTTP POST"| Server["Node.js server + memory layer"]
-    Server --> DB["FalkorDB: memory:user"]
-    Server --> Emb["Fake or OpenAI embeddings"]
-    Browser["3D browser UI"] -->|"GET /api/graph"| Server
-    Server -->|"SSE /events"| Browser
-```
-
-See [Architecture](docs/ARCHITECTURE.md) for query counts, data flow, SSE, and
-the file map; [HTTP API](docs/API.md) and [store contract](docs/CONTRACT.md) for
-payloads and adapter semantics.
-
-## Quick start
-
-Use **Node.js 24**, Git, and PowerShell. **No `npm install` or server build step
-is needed**: the backend has no package dependencies. The browser needs WebGL
-and network access to jsDelivr for its rendering modules.
-
-### 1. Start locally, without external services
-
-Clone this repository and enter its directory. In one PowerShell session:
-
-```powershell
-git clone https://github.com/yukeidaro/jinai-memory.git
-Set-Location .\jinai-memory
-
-$env:MEMORY_TOKEN = [guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N")
-$env:FALKORDB_URL = ""
-$env:OPENAI_API_KEY = ""
-$env:EMBEDDINGS_PROVIDER = "fake"
-$env:EMBED_DIM = "128"
-$env:MEMORY_USER = "demo"
-$env:PORT = "8787"
-
-$server = Start-Process node -ArgumentList ".\src\server.js" -NoNewWindow -PassThru
-```
-
-This starts `node .\src\server.js` in the background so the same shell can seed
-it without copying the token. Wait for `Listening on port 8787`, then run:
-
-```powershell
-(Invoke-WebRequest http://localhost:8787/healthz).StatusCode
-node .\scripts\seed-demo.mjs http://localhost:8787 $env:MEMORY_TOKEN
-
-$encodedToken = [uri]::EscapeDataString($env:MEMORY_TOKEN)
-Start-Process "http://localhost:8787/?token=$encodedToken"
-```
-
-Expect HTTP **200** and
-`Seeded 10 demo memories (chatgpt=2, claude=4, cursor=2, copilot=2).`
-Click a node to read its Markdown; use **Group by AI** or the author filters.
-Switch to 2D with `?view=2d` (or append `&view=2d` to a URL that already has a token).
-Seeding again appends another ten notes.
-
-For a visual-only preview, open `http://localhost:8787/?mock=1`. It uses built-in
-samples and simulated events, without graph API or SSE calls; the browser still
-loads rendering modules from the CDN.
-
-Stop only the server you started when finished:
-
-```powershell
-Stop-Process -Id $server.Id
-```
-
-This first path uses **in-memory storage**: restart loses the notes. A healthy
-`/healthz` checks the HTTP server, not continuing DB connectivity.
-
-### 2. Use persistent FalkorDB storage
-
-On a machine with Docker, start a local FalkorDB instance:
-
-```powershell
-docker run -p 6379:6379 falkordb/falkordb:latest
-```
-
-Keep Docker running in its terminal. In the application shell, stop the previous
-application process, set the following, and repeat the server start and seed:
-
-```powershell
-$env:FALKORDB_URL = "redis://localhost:6379"
-```
-
-Check the startup log says `store: falkordb`. Notes now live in `memory:demo`,
-outside the application process. The command above does not configure a Docker
-volume; do not treat it as a durable backup.
-
-### 3. Optional semantic embeddings
-
-The local path and Render Blueprint explicitly use `fake`: deterministic hashed
-word/character features, **not semantic understanding**. To use OpenAI, set
-`EMBEDDINGS_PROVIDER=openai` and supply your `OPENAI_API_KEY` privately. Remove
-the `EMBED_DIM=128` override or change it to **1536** for the default
-`text-embedding-3-small` model. Use a new `MEMORY_USER` when switching providers
-or dimensions; existing embeddings are not migrated.
-
-The server does not automatically load `.env`. For file-based configuration use
-the placeholders in [`.env.example`](.env.example) and
-`node --env-file=.env .\src\server.js`, keeping real values out of Git.
-
-### 4. Bring your existing AI memory in one command
-
-Preview both Claude Code files and past sessions locally:
-
-```powershell
-node .\scripts\import.mjs
-# Safe, fictional examples:
-node .\scripts\import.mjs --home .\test\fixtures\import-home --root .\test\fixtures\transcripts
-```
-
-The default is a **dry run**: no network requests or state writes. The final
-five rows count `skills`, `memory files`, `CLAUDE.md sections`, `Claude Code
-sessions`, and `secrets skipped`. Skills include Copilot skills, as in the
-individual file importer. Non-secret new, changed and unchanged entries count;
-`✓` means the category was counted without a send failure, **not** that a dry
-run uploaded it. A failed send marks its category `✗` with a failure count and
-sets a nonzero exit code. `secrets skipped` counts rejected file/section entries
-plus individual secret-bearing items dropped from selected sessions, not just
-whole sessions. Secret detection is heuristic; review confidentiality too.
-
-Use `--verbose` to review metadata tables (titles, paths and status, never note
-bodies or summaries). Only after review, choose **your own trusted server**
-and explicitly enable sending:
-
-```powershell
-$env:JINAI_MEMORY_URL = "http://localhost:8787"
-# For the local server you started yourself above:
-$env:JINAI_MEMORY_TOKEN = $env:MEMORY_TOKEN
-node .\scripts\import.mjs --yes
-```
-
-There is **no token argument**. `--server` overrides `JINAI_MEMORY_URL`.
-`--home` selects the home for both file discovery and the default session tree
-(`<home>/.claude/projects`), and for both existing state files under
-`<home>/.jinai-memory`. Keep real state and personal data outside this repository.
-Repeat `--include <file.md>` to add instruction sections (counted with
-`CLAUDE.md sections`). `--root`, repeatable `--exclude-project`,
-`--since YYYY-MM-DD` (UTC) and `--limit N` (oldest first) apply only to sessions.
-Scratch workspaces are always excluded, including cwd basenames matching
-`scratch-YYYY-MM-DD-xxxxxx` (six letters or digits).
-
-Files are sent first, then sessions, using the same secret checks, successful-only
-state and unchanged-entry skipping as the individual commands below. Changed
-file sections append new memories; changed sessions require a server supporting
-the existing **T16 `externalId`/`follows` response** for replacement and
-`NEXT_STEP` links. The combined command does not enable legacy transcript mode
-or add that support to a server. For independent control, use
-[the file importer](#import-your-own-claude-code-memory-individual-command) or
-[the session importer](#import-your-claude-code-sessions-individual-command).
+*Demo-video still with fictional data; token bounds above use the test estimator.*
 
 ## Connect your AI
 
-For cloud-hosted connectors, first deploy to a reachable HTTPS host; they cannot
-reach your PC's `localhost`. Replace `<host>` with your actual deployment host
-and `<encoded-token>` with the **URL-encoded token only**:
+Cloud connectors need a reachable HTTPS deployment, not your PC's `localhost`.
+Use your own host and replace `<encoded-token>` with **only the URL-encoded token**:
 
-| Client | Setup | MCP server URL shape |
+| Client | Setup | MCP URL shape |
 | --- | --- | --- |
-| Claude | Settings → Connectors → Add custom connector | `https://<host>/mcp/<encoded-token>-claude` |
-| ChatGPT | Settings → Apps → Advanced → Developer mode → Create | `https://<host>/mcp/<encoded-token>-chatgpt` |
-| Cursor | Add an HTTP MCP server in the client's MCP configuration | `https://<host>/mcp/<encoded-token>-cursor` |
-| Copilot | Add an HTTP MCP server in a client supporting remote MCP | `https://<host>/mcp/<encoded-token>-copilot` |
+| Claude | Settings > Connectors > Add custom connector | `https://<host>/mcp/<encoded-token>-claude` |
+| ChatGPT | Settings > Apps > Advanced > Developer mode > Create | `https://<host>/mcp/<encoded-token>-chatgpt` |
+| Cursor / Copilot / other HTTP MCP clients | Add a remote HTTP MCP server | `https://<host>/mcp/<encoded-token>-cursor` (or `-copilot`) |
 
-Available menus and custom-connector access depend on client version, plan, and
-workspace settings. Choose **No authentication** if asked: the URL carries the
-shared secret; this server does not implement OAuth. All four suffixes use the
-same user's graph. The suffix identifies the writing/calling AI, not a separate
-permission boundary, and can be chosen by any token holder.
+Menus and access depend on client version, plan and workspace settings.
+Choose **No authentication** if asked: the URL carries a shared secret, not OAuth.
+Keep token-bearing URLs private, including encoded ones. The source suffix is
+an author label, not a permission boundary. MCP uses JSON-RPC over **HTTP POST**;
+opening its URL in a browser returns 405. UI SSE at `/events` is separate.
 
-Encode `+`, `/`, and `=` in generated tokens as `%2B`, `%2F`, and `%3D` (for
-example, with `[uri]::EscapeDataString`). Keep the stored environment value
-unencoded. The UI URL shape is `https://<host>/?token=<encoded-token>`.
-Never publish any token-bearing URL, including encoded ones.
-
-MCP accepts JSON-RPC over **HTTP POST**, returning JSON; this is not a stdio or
-legacy SSE MCP endpoint. Opening an authenticated MCP URL in a browser returns
-**405**. `/events` is a separate UI notification stream. The MCP server handles
-`initialize`, `ping`, `tools/list`, and `tools/call`.
-
-For the dinner demo, enable the connector in both clients, save the preference
-and meal from ChatGPT, then ask Claude to open the dinner topic before answering.
-The map is rebuilt on each `tools/list`; call `orient` explicitly if the client
-caches an older tool description. Responses depend on the model and its tool use.
-
-## Import your own Claude Code memory (individual command)
-
-Run the dependency-free importer locally with Node.js 24. **Never add personal
-files, import state, tokens, or imported content to this repository.** The
-checked-in `test/fixtures/import-home` contains fictional examples only.
-
-First preview the metadata-only list in PowerShell:
-
-```powershell
-node .\scripts\import-local.mjs
-```
-
-The default is a **dry run**: no network requests and no state writes. It lists
-status, kind, title, home-relative file path, and character count, never note
-bodies or summaries. Review the titles and paths before enabling import.
-
-The importer finds Claude Code skills (`~/.claude/skills/*/SKILL.md`), project
-memory (`~/.claude/projects/*/memory/*.md`, excluding the `MEMORY.md` index),
-global instructions (`~/.claude/CLAUDE.md`), and Copilot skills
-(`~/.copilot/skills/*/SKILL.md`). Skills become facts; feedback becomes a
-preference, project memory a decision, and other memory a fact. Only the final
-segment of an encoded project folder is used as its project tag, not its full
-path. Instructions split at `##` headings into preferences; a nonempty preamble
-is preserved as its own entry, and a file without headings stays one entry.
-Markdown code fences do not create sections. Text over 20,000 Unicode
-characters is shortened to that limit, including a final `(truncated)` marker.
-
-Set the base URL of **your own trusted server** and its token privately, then
-rerun with explicit consent:
-
-```powershell
-$env:JINAI_MEMORY_URL = "http://localhost:8787"
-# If you started this local server using the Quick start instructions:
-$env:JINAI_MEMORY_TOKEN = $env:MEMORY_TOKEN
-node .\scripts\import-local.mjs --yes
-```
-
-For a hosted server, supply `JINAI_MEMORY_TOKEN` through your private environment
-or secret manager and use HTTPS. There is deliberately **no `--token` option**:
-the token is read only from `JINAI_MEMORY_TOKEN`, never from command arguments.
-`--server` overrides `JINAI_MEMORY_URL`; `--source` sets the MCP author suffix
-(default `claude-code`, 1-20 lowercase letters, digits, or hyphens).
-
-Use `--home <directory>` to scan a different home, `--only
-skills,memory,claude-md,copilot` to select categories, and repeat `--include
-<file.md>` to add Markdown files, independently of `--only`. Included files
-use the same instruction-section conversion. For example:
-
-```powershell
-node .\scripts\import-local.mjs --home .\test\fixtures\import-home --only skills,copilot
-```
-
-The secret guard runs locally **before sending**, including on frontmatter and
-untruncated text. Matches are marked `secret-skip` with only the rule type;
-secret-looking titles/paths are redacted. Detection is heuristic, not a
-guarantee: review your files and do not import confidential data. Redirects are
-not followed, and neither tokens nor server error bodies are printed. Writes
-are sequential; failures are reported safely and other entries continue.
-
-Only successful imports update `<home>/.jinai-memory/import-state.json`.
-`--state <file>` chooses another location; keep it outside the repository.
-Unchanged file/heading hashes are skipped on later runs. Changed entries append
-**new memories**, not updates: MCP has no update tool. Repeated headings are
-tracked separately. Keep separate state files for different homes, servers, or
-tokens; state is local bookkeeping, not a server backup. Removing state or
-restarting an in-memory server does not reconcile earlier imports.
-
-Imported memories go only to the graph authorized by your token on the selected
-server. This demo maps its configured token to one `MEMORY_USER` graph; anyone
-sharing that token can access the same graph. The importer does not upload
-anything to this repository or other AI tools. The server's configured embedding
-provider still applies (OpenAI embeddings send note data to OpenAI; `fake` does
-not).
-
-## Import your Claude Code sessions (individual command)
-
-This separate, dependency-free importer reads `~/.claude/projects/**/*.jsonl`
-**locally, one line at a time**. Each session becomes one short dated event:
-title, date, project folder name, branch, the first three human requests (up to
-200 characters each), up to 20 edited/written files, 10 skills or agents, five
-GitHub PR URLs, and message/tool counts and elapsed minutes. File paths are
-project-relative, or just a filename outside the project; absolute machine
-paths are removed. Shared project, filename and skill tags connect sessions.
-AI answer bodies, thinking, tool results, images, attachments, file-history
-snapshots and injected command/system blocks are not imported. Sessions without
-human requests or a usable date are skipped. Malformed lines and unknown record
-types are ignored. The local secret guard drops matching individual items,
-including matches beyond the retained request length; it is heuristic, not a
-guarantee that an item is safe or non-confidential.
-
-First review the **metadata-only dry run**, which makes no network requests and
-does not write state. It shows status, date, project, title (at most 60
-characters), file count and dropped-secret count, never request bodies:
-
-```powershell
-node .\scripts\import-transcripts.mjs
-# Safe, fictional examples checked into this repository:
-node .\scripts\import-transcripts.mjs --root .\test\fixtures\transcripts
-```
-
-Only after review, set your own trusted server URL and supply its token
-privately through `JINAI_MEMORY_TOKEN`, then explicitly enable sending:
-
-```powershell
-$env:JINAI_MEMORY_URL = "http://localhost:8787"
-# For the local server you started yourself in Quick start:
-$env:JINAI_MEMORY_TOKEN = $env:MEMORY_TOKEN
-node .\scripts\import-transcripts.mjs --yes
-```
-
-There is **no token argument**. `--server` overrides `JINAI_MEMORY_URL`; the MCP
-source is always `claude-code`. Imports enter **only the graph authorized by your
-token on the selected server**, never this repository or another user's graph.
-Anyone sharing the token can access that graph. The selected server's embedding
-provider applies: OpenAI embeddings send the extracted note to OpenAI; `fake`
-does not. Review confidentiality as well as detected secrets before sending.
-Never commit personal transcripts, extracted notes, tokens or state to this
-repository; all checked-in transcript fixtures are fictional.
-
-Project directories containing `scratch-workspaces` are always excluded.
-Sessions whose cwd basename matches `scratch-YYYY-MM-DD-xxxxxx` (six letters
-or digits) are also always excluded, even when their transcript folder has a
-different name.
-Repeat `--exclude-project <name>` to exclude more project/folder names (matching
-is case-insensitive). `--root <directory>` selects another transcript tree,
-`--since YYYY-MM-DD` selects sessions starting on/after that UTC date,
-`--limit N` takes the oldest N eligible sessions, and `--session <sessionId>`
-selects one session. For example:
-
-```powershell
-node .\scripts\import-transcripts.mjs --exclude-project client-work --exclude-project private --since 2026-10-01 --limit 10
-```
-
-The default mode requires a server with **T16 `externalId`/`follows` support**
-and the `{ id, replaced, followsLinked }` remember result. It sends sessions
-sequentially in time order using `cc-session:<sessionId>`: changed sessions are
-replaced rather than appended, and `follows` creates `NEXT_STEP` from the previous
-successfully imported session in the same project. A failed write does not
-become a predecessor. Unchanged sessions are not sent; inserting an older session
-also refreshes the following session's link. `--no-external-id` explicitly
-enables a legacy server: changed sessions append and there are no `NEXT_STEP`
-links. Do not use that mode when replacement is required.
-
-Only confirmed successes update `~/.jinai-memory/transcript-state.json`
-(override with `--state <file>`). State contains session IDs, file modification
-time/size, payload hashes and opaque project identity, not transcript bodies or
-absolute project paths. Keep it outside this repository, and use separate state
-files for different roots, servers and tokens. State is bookkeeping, not a
-server backup: deleting it or restarting an in-memory server requires deliberate
-reconciliation. Network errors are reported without tokens or server error
-bodies, and remaining sessions continue; a state-write failure stops the import.
-
-**Next step, optional:** after reviewing and testing manual imports, register a
-Claude Code `SessionEnd` command hook yourself in your private
-`~/.claude/settings.json` under
-`hooks.SessionEnd = [{ "hooks": [{ "type": "command", "command": "<your wrapper command>" }] }]`.
-Your wrapper should parse the hook's JSON stdin, take `session_id`, and invoke
-`node <absolute-path-to-import-transcripts.mjs> --session <session_id> --yes`
-with the private environment and external state path above; quote paths and pass
-the session ID as a separate argument, not shell-interpolated text. Start without
-`--yes` while checking hook behavior. This importer never edits your hook or
-configuration files.
+`MEMORY_USERS` maps user names to distinct tokens and selects separate
+`memory:<user>` graphs for MCP, snapshots and events. It overrides `MEMORY_TOKEN`
+and `MEMORY_USER`; without it, the single-user default is `demo`.
+See the [deployment guide](docs/DEPLOY.md) for configuration and URL encoding.
 
 ## MCP tools
 
 | Tool | Input | Result / behavior |
 | --- | --- | --- |
-| `remember` | Required: `kind`, `title`, Markdown `text`, one-line `summary`, `tags`. Events also require ISO datetime `occurredAt`. Optional: `relatesTo` IDs/titles. | `{ id }`; embeds once, adds Topic/Source and related edges. Tool guidance asks for 3-5 synonymous/related tags; validation permits at most 10 tags and 20,000 text characters. |
-| `open` | `id` or exact `title` of a Memory or Topic | `{ note, neighbors }`; note includes dates and `days_ago`; at most 5 neighbor summaries. No embedding call. |
-| `recall` | `query` | `{ preferences, recent_events, others, hint }`; one query embedding, vector hits expanded through Topics. Events with `days_ago <= 7` are grouped as recent, not suppressed. |
-| `orient` | None | Current entry map as a string, also embedded in the `open` description during `tools/list`. No embedding call. |
+| `remember` | `kind`, `title`, Markdown `text`, one-line `summary`, `tags`; events require ISO datetime `occurredAt`. Optional `relatesTo`, `externalId`, `follows`. | `{ id, replaced }`, plus `followsLinked` when requested. Saves a preference, event, fact or decision; links context. |
+| `open` | `id` or exact `title` of a Memory or Topic | `{ note, neighbors }`, including dates and `days_ago`; no embedding. |
+| `recall` | `query` | `{ preferences, recent_events, others, hint }`; vector search plus Topic expansion. |
+| `orient` | None | Refreshed entry-map string; no embedding. |
 
-The server supplies `user` and `source` from its configuration and the URL;
-these are not tool arguments. Some map labels and recall guidance are currently
-Japanese, including relative-day labels.
+The server supplies `user` and `source`; they are not tool arguments. Clients may
+cache the map from `tools/list`; call `orient` to refresh. Some map labels are Japanese.
+
+## Architecture
+
+See the [architecture diagrams and query counts](docs/ARCHITECTURE.md),
+[HTTP API](docs/API.md) and [store contract](docs/CONTRACT.md).
+The backend uses Node.js built-ins, including a RESP2 client for `GRAPH.QUERY`.
 
 ## Tests
 
-```powershell
-node --test
-```
-
-Without `FALKORDB_URL`, the real-FalkorDB integration test is skipped.
-Coverage includes the combined dry run and import, scratch-session exclusions,
-English burger demo data, cross-client dinner recall,
-per-user isolation, vector/index query generation, SSE, and the 2,000-note
-response-budget check. Real-database integration is opt-in via `FALKORDB_URL`;
-use a disposable test database, never production credentials. It creates random
-integration graphs and attempts to delete them afterward.
+Run `node --test`. The no-database run reports **248 tests: 247 pass, 1 skipped**.
+Coverage includes imports, cross-client dinner recall, user isolation, secret
+rejection, session replacement/linking, HTTP/SSE and response budgets.
+The real-FalkorDB suite is opt-in with `FALKORDB_URL`; use a disposable test
+database. Real-FalkorDB contract checks previously passed on FalkorDB Cloud
+(2026-10-17); they were not rerun for this documentation update.
 
 ## Deploy
 
-[`render.yaml`](render.yaml) deploys the Node 24 Docker image on Render's free
-plan in **Ohio**, using `/healthz`. It generates `MEMORY_TOKEN`, fixes
-`EMBEDDINGS_PROVIDER=fake` and `MEMORY_USER=demo`, and requests a FalkorDB URL
-and an optional OpenAI key. Set a real FalkorDB URL privately or storage will
-remain in-process.
-
-Follow [the Render deployment guide](docs/DEPLOY.md) for Blueprint setup,
-configuration, URL encoding, and cold-start troubleshooting. The guide is in
-Japanese; its earlier warning that `public/` is missing is historical:
-`public/index.html` is included in this checkout.
+The [Render Blueprint](render.yaml) uses the Node 24 [Dockerfile](Dockerfile),
+Ohio, the free plan and `/healthz`. Configure `FALKORDB_URL` privately for
+persistence. Follow the [deployment guide](docs/DEPLOY.md) (Japanese); its warning
+about missing `public/` is historical, since `public/index.html` is now included.
 
 ## Limitations & security
 
-- **Demo data only.** The demo's FalkorDB Cloud free-tier connection uses
-  unencrypted `redis://`. HTTPS to the web server does not encrypt the
-  server-to-database hop. The client also supports `rediss://` when the database
-  endpoint provides TLS.
-- **Shared URL secret, not OAuth.** Token holders can read and append memory
-  across AI sources. URLs can leak through history, logs, screenshots, or
-  recordings. Rotate `MEMORY_TOKEN`, restart/redeploy, and update every client
-  after a leak. Do not store personal, confidential, or real-user data here.
-- **Local does not imply loopback-only.** The server listens without an explicit
-  host; the Docker example publishes port 6379 without authentication options.
-  Keep this demo on a trusted machine/network and restrict inbound ports.
-- **Free hosting sleeps.** Render's free service can sleep after inactivity.
-  Warm it before a demo; initial client requests may time out. In-memory notes
-  do not survive process restarts.
-- **No full memory lifecycle UI.** The four MCP tools do not provide deletion,
-  editing, per-agent permissions, or automatic import of conversation histories.
-  The AI must explicitly save notes and choose when to read them.
-- **Bounded answers, not bounded scans.** `open` can truncate Markdown; the UI
-  snapshot includes only the newest 500 Memory nodes and up to 8,000 characters
-  per note, plus all Topics and Sources. `recall`, neighborhood scans, and map
-  construction can grow with the graph. The 2,000-note test is an in-memory
-  response-size check, not a cloud throughput benchmark.
-- **External dependencies at runtime.** The browser imports third-party code
-  from jsDelivr. OpenAI embeddings send note/title/tag text and fallback queries
-  to OpenAI. Explicit `fake` needs no API key but does not supply semantic recall.
+- **Demo data only on this Cloud setup.** The free FalkorDB Cloud endpoint uses unencrypted `redis://`; web HTTPS does not encrypt the database hop. `rediss://` requires a TLS-enabled endpoint.
+- **Shared secrets, not accounts or OAuth.** Token holders can read/write their graph under any AI suffix. URLs can leak through history, logs or recordings; rotate leaked tokens and update clients.
+- **Heuristic secret rejection.** MCP saves reject detected API keys, private keys, passwords and card numbers. This is not comprehensive detection; review confidentiality before importing.
+- **Fake embeddings by default without an API key.** Hashed word/character features are not semantic understanding. For semantic embeddings, set `EMBEDDINGS_PROVIDER=openai` and `OPENAI_API_KEY`, remove the 128-dimension override (OpenAI defaults to 1536), and use a fresh user graph. OpenAI receives embedded content and fallback queries; the server does not auto-load `.env`.
+- **Bounded output, not bounded scans.** Map/neighborhood work grows with the graph; `recall` has no token cap. `open` may shorten text; the UI shows the newest 500 Memory nodes with up to 8,000 characters each.
+- **Prototype boundaries.** No delete/edit tool, per-agent permissions or automatic session sync. The browser needs WebGL and third-party rendering modules from jsDelivr. The server is not loopback-only; restrict inbound access on a trusted local network.
+
+## Built during Graph Hacks
+
+Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs x FalkorDB),
+**October 15-18, 2026**. This repository's memory service, importers and visualizer
+were newly written during the hackathon; the [commit history](https://github.com/yukeidaro/jinai-memory/commits/main/)
+records implementation on October 17-18. Primary track: **Agent Memory and
+Coordination**; secondary track: **Company Brain**.
 
 ## License
 
