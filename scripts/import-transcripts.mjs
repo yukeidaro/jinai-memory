@@ -277,7 +277,8 @@ async function remember(endpoint, memory, id, fetchImpl, externalIds) {
     throw new ImportError("MCP returned an invalid remember result.");
   }
   if (typeof saved?.id !== "string" || !saved.id.trim() ||
-      externalIds && (typeof saved.replaced !== "boolean" || typeof saved.followsLinked !== "boolean")) {
+      externalIds && (typeof saved.replaced !== "boolean" ||
+        memory.follows !== undefined && typeof saved.followsLinked !== "boolean")) {
     throw new ImportError("MCP returned an unsupported remember result.");
   }
   if (memory.follows && !saved.followsLinked) {
