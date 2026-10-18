@@ -2,6 +2,7 @@ import * as THREE from "three";
 import ForceGraph3D from "3d-force-graph";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { escapeHtml, renderMarkdown } from "./markdown.js";
+import { resolveViewMode } from "./view-mode.js";
 
 const AUTHORS = {
   claude: { label: "Claude", color: "#ffb454", center: [-155, 105, 0] },
@@ -24,6 +25,10 @@ const draggedArrivals = new Set();
 let data = { nodes: [], links: [] };
 let nodesById = new Map();
 let graph;
+let graph2d;
+let viewMode = "3d";
+let changingView = false;
+let graph3dDirty = false;
 let mock;
 let events;
 let stopMock;
@@ -45,6 +50,84 @@ let initialFitRequested = false;
 let fitPending = false;
 let fitTimer;
 let resizeFitFrame;
+
+function loadViewMode() {
+  let saved;
+  try {
+    saved = localStorage.getItem("jinai-memory-view");
+  } catch {
+    console.warn("Local storage unavailable. The graph view will not persist across reloads.");
+  }
+  return resolveViewMode(query.get("view"), saved);
+}
+
+function updateViewControls() {
+  const flat = viewMode === "2d";
+  $("view-toggle").textContent = flat ? "3D view" : "2D view";
+  $("view-toggle").setAttribute("aria-pressed", String(flat));
+  $("graph3d").hidden = flat;
+  $("graph2d").hidden = !flat;
+  $("graph").setAttribute("aria-label", `${flat ? "2D" : "3D"} graph. Drag to ${flat ? "pan" : "orbit"}, scroll to zoom. Use Browse memories for keyboard navigation.`);
+  document.querySelector(".interaction-hint").firstChild.textContent = `Drag to ${flat ? "pan" : "orbit"} `;
+  const split = flat ? graph2d.split : splitMode;
+  $("split-toggle").setAttribute("aria-pressed", String(split));
+  $("split-toggle").textContent = split ? "Restore force layout" : "Group by AI";
+}
+
+async function setViewMode(nextMode) {
+  if (stopped || changingView) return;
+  changingView = true;
+  $("view-toggle").disabled = true;
+  $("view-toggle").setAttribute("aria-busy", "true");
+  try {
+    if (nextMode !== viewMode) {
+      if (nextMode === "2d") {
+        if (!graph2d) {
+          const { createGraph2D } = await import("./graph2d.js");
+          if (stopped) return;
+          graph2d = await createGraph2D($("graph2d"), {
+            author, emphasized, pulses,
+            isSelected: (node) => selectedId === node.id,
+            onSelect: selectNode, onInteract: markInteraction, motionPreference,
+            initialSplit: splitMode,
+          });
+        }
+        if (stopped) { graph2d.stop(); return; }
+        graph.pauseAnimation();
+        graph2d.resume(data);
+      } else {
+        graph2d.pause(startArrival);
+        if (graph3dDirty) {
+          graph.graphData(data);
+          graph3dDirty = false;
+        }
+        graph.resumeAnimation();
+      }
+      viewMode = nextMode;
+    }
+    updateViewControls();
+    $("view-error").hidden = true;
+    try {
+      localStorage.setItem("jinai-memory-view", viewMode);
+    } catch {
+      console.warn("Local storage unavailable. The graph view will not persist across reloads.");
+    }
+  } catch (error) {
+    if (nextMode === "2d") {
+      graph2d?.pause(startArrival);
+      graph.resumeAnimation();
+      viewMode = "3d";
+      updateViewControls();
+    }
+    $("view-error").textContent = "2D unavailable. Continuing in 3D. / 2D を読み込めません。3D で表示を続けます。";
+    $("view-error").hidden = false;
+    console.error("Graph view switch failed:", error.name, error.message);
+  } finally {
+    changingView = false;
+    $("view-toggle").disabled = false;
+    $("view-toggle").setAttribute("aria-busy", "false");
+  }
+}
 
 function readToken(search) {
   const match = search.match(/(?:^\?|&)token(?:=([^&]*))?(?=&|$)/);
@@ -106,10 +189,14 @@ function connection(text, state) {
 
 function markInteraction() {
   lastInteraction = performance.now();
-  if (graph) graph.controls().autoRotate = false;
+  if (graph && viewMode === "3d") graph.controls().autoRotate = false;
 }
 
 function cancelAutoFit() {
+  if (viewMode === "2d") {
+    graph2d.cancelAutoFit();
+    return;
+  }
   autoFitEnabled = false;
   fitPending = false;
   clearTimeout(fitTimer);
@@ -117,6 +204,10 @@ function cancelAutoFit() {
 }
 
 function fitGraph(padding = 60) {
+  if (viewMode === "2d") {
+    graph2d.fit(padding);
+    return;
+  }
   const duration = motionPreference.matches ? 0 : 700;
   if (data.nodes.length < 2) {
     graph.cameraPosition({ x: 0, y: 30, z: 520 }, { x: 0, y: 0, z: 0 }, duration);
@@ -126,7 +217,7 @@ function fitGraph(padding = 60) {
 }
 
 function finishAutoFit() {
-  if (stopped || !autoFitEnabled || !fitPending) return;
+  if (stopped || viewMode === "2d" || !autoFitEnabled || !fitPending) return;
   fitPending = false;
   clearTimeout(fitTimer);
   fitGraph();
@@ -300,7 +391,7 @@ function syncGraph(snapshot) {
     }
     topologyChanged = true;
     const node = { ...raw };
-    startArrival(node, index);
+    if (viewMode === "3d") startArrival(node, index);
     return node;
   });
   nodesById = new Map(nodes.map((node) => [node.id, node]));
@@ -322,7 +413,12 @@ function syncGraph(snapshot) {
     return { ...raw, w: raw.w ?? 1, key, source: nodesById.get(raw.source), target: nodesById.get(raw.target) };
   });
   data = { nodes, links };
-  if (topologyChanged) graph.graphData(data);
+  if (topologyChanged) {
+    if (viewMode === "2d") {
+      graph3dDirty = true;
+      graph2d.updateData(data);
+    } else graph.graphData(data);
+  }
   if (!initialFitRequested) {
     initialFitRequested = true;
     requestAutoFit(true);
@@ -446,12 +542,14 @@ function applyTouch(event, focus) {
     link.source = nodesById.get(from);
     link.target = nodesById.get(to);
     link.particleColor = AUTHORS[String(event.source).toLowerCase()]?.color || "#edf2ff";
-    graph.emitParticle(link);
+    const renderer = viewMode === "2d" ? graph2d : graph;
+    const particleView = viewMode;
+    renderer.emitParticle(link);
     if (!motionPreference.matches) {
       for (const delay of [100, 220]) {
         const timer = setTimeout(() => {
           particleTimers.delete(timer);
-          if (!stopped && data.links.includes(link)) graph.emitParticle(link);
+          if (!stopped && viewMode === particleView && data.links.includes(link)) renderer.emitParticle(link);
         }, delay);
         particleTimers.add(timer);
       }
@@ -641,6 +739,10 @@ function selectNode(node) {
   $("details").hidden = false;
   document.body.classList.add("details-open");
   $("detail-close").focus({ preventScroll: true });
+  if (viewMode === "2d") {
+    graph2d.select(node);
+    return;
+  }
   const target = new THREE.Vector3(node.x || 0, node.y || 0, node.z || 0);
   const direction = graph.camera().position.clone().sub(target).normalize();
   if (!direction.lengthSq()) direction.set(0, 0, 1);
@@ -669,7 +771,7 @@ function toggleBrowser(open) {
 
 function animate(now) {
   if (stopped) return;
-  for (const [id, entry] of arrivals) {
+  for (const [id, entry] of viewMode === "3d" ? arrivals : []) {
     const node = nodesById.get(id);
     if (!node) continue;
     if (motionPreference.matches) {
@@ -686,7 +788,7 @@ function animate(now) {
     }
     if (t >= 1) releaseArrival(node);
   }
-  for (const [id, visual] of visuals) {
+  for (const [id, visual] of viewMode === "3d" ? visuals : []) {
     const node = nodesById.get(id);
     if (!node) continue;
     const elapsed = now - (pulses.get(id) ?? -Infinity);
@@ -708,7 +810,7 @@ function animate(now) {
     if (age > 21000) row.remove();
     else row.style.opacity = String(Math.max(0, 1 - age / 22000));
   }
-  graph.controls().autoRotate = !motionPreference.matches && !controlsActive && now - lastInteraction >= 10000;
+  if (viewMode === "3d") graph.controls().autoRotate = !motionPreference.matches && !controlsActive && now - lastInteraction >= 10000;
   animation = requestAnimationFrame(animate);
 }
 
@@ -730,6 +832,7 @@ function stop() {
   events?.close();
   stopMock?.();
   graph?.pauseAnimation();
+  graph2d?.stop();
 }
 
 async function start() {
@@ -747,7 +850,7 @@ async function start() {
     return;
   }
   if (mockMode) mock = (await import("./mock.js")).createMockSource();
-  graph = ForceGraph3D({ controlType: "orbit", rendererConfig: { antialias: true, powerPreference: "high-performance" } })($("graph"))
+  graph = ForceGraph3D({ controlType: "orbit", rendererConfig: { antialias: true, powerPreference: "high-performance" } })($("graph3d"))
     .backgroundColor("#05060a")
     .showNavInfo(false)
     .nodeThreeObject(makeNode)
@@ -792,10 +895,11 @@ async function start() {
   graph.postProcessingComposer().addPass(bloom);
   const observer = new ResizeObserver(([entry]) => {
     graph.width(entry.contentRect.width).height(entry.contentRect.height);
+    graph2d?.resize(entry.contentRect.width, entry.contentRect.height);
     cancelAnimationFrame(resizeFitFrame);
-    if (initialFitRequested && autoFitEnabled && !fitPending && entry.contentRect.width > 0 && entry.contentRect.height > 0) {
+    if (viewMode === "3d" && initialFitRequested && autoFitEnabled && !fitPending && entry.contentRect.width > 0 && entry.contentRect.height > 0) {
       resizeFitFrame = requestAnimationFrame(() => {
-        if (!stopped && autoFitEnabled && !fitPending) fitGraph();
+        if (!stopped && viewMode === "3d" && autoFitEnabled && !fitPending) fitGraph();
       });
     }
   });
@@ -810,7 +914,13 @@ async function start() {
       else if (!$("browser").hidden) toggleBrowser(false);
     }
   });
+  $("view-toggle").addEventListener("click", () => { void setViewMode(viewMode === "3d" ? "2d" : "3d"); });
   $("split-toggle").addEventListener("click", () => {
+    if (viewMode === "2d") {
+      graph2d.setSplit(!graph2d.split);
+      updateViewControls();
+      return;
+    }
     splitMode = !splitMode;
     $("split-toggle").setAttribute("aria-pressed", String(splitMode));
     $("split-toggle").textContent = splitMode ? "Restore force layout" : "Group by AI";
@@ -818,6 +928,10 @@ async function start() {
     graph.d3ReheatSimulation();
   });
   $("fit-view").addEventListener("click", () => {
+    if (viewMode === "2d") {
+      graph2d.fit(110);
+      return;
+    }
     cancelAutoFit();
     autoFitEnabled = true;
     fitGraph(85);
@@ -838,6 +952,7 @@ async function start() {
   motionPreference.addEventListener("change", () => {
     markInteraction();
     graph.linkDirectionalParticleSpeed(motionPreference.matches ? 0.035 : 0.013);
+    graph2d?.updateMotion();
   });
   graph.renderer().domElement.addEventListener("webglcontextlost", (event) => {
     event.preventDefault();
@@ -849,6 +964,7 @@ async function start() {
   animation = requestAnimationFrame(animate);
   await refreshGraph();
   if (!stopped) connectEvents();
+  if (!stopped) await setViewMode(loadViewMode());
 }
 
 start().catch((error) => {
