@@ -1,6 +1,6 @@
 {
   "name": "jinai-memory",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "One graph memory shared across AI tools, stored in FalkorDB, exposed over MCP, visible as a 3D graph.",
   "type": "module",
   "license": "AGPL-3.0-only",

@@ -232,7 +232,7 @@ export function createMcpHandler({
         result: {
           protocolVersion: VERSIONS.has(params.protocolVersion) ? params.protocolVersion : "2025-06-18",
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: "jinai-memory", version: "0.1.0" },
+          serverInfo: { name: "jinai-memory", version: "0.1.1" },
           instructions,
         },
       };
