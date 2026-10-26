@@ -18,6 +18,11 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+      - name: Use npm 11.5.1 or newer
+        run: |
+          npm install -g "npm@>=11.5.1 <12"
+          node --version
+          npm --version
       - name: Test
         run: node --test
       - name: Check package contents
