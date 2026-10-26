@@ -60,7 +60,7 @@ test("MCP negotiates all supported protocol versions and falls back for unknown 
     assert.equal(reply.id, 1);
     assert.equal(reply.result.protocolVersion, protocolVersion?.startsWith("202") ? protocolVersion : "2025-06-18");
     assert.deepEqual(reply.result.capabilities, { tools: { listChanged: false } });
-    assert.deepEqual(reply.result.serverInfo, { name: "jinai-memory", version: "0.1.0" });
+    assert.deepEqual(reply.result.serverInfo, { name: "jinai-memory", version: "0.1.1" });
     assert.match(reply.result.instructions, /Memory map.*open.*remember/su);
     assert.ok(reply.result.instructions.split("\n").length <= 5);
     assert.match(reply.result.instructions, /even without a request/u);
